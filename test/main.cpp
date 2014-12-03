@@ -34,12 +34,13 @@ int main(int argc, char **argv)
 	print(d, 0);
 
 	int i;
+	printf("\nAllocation Test:\n");
 	srand(1234);
 	for (i = 0; i < 10; i++) {
 		int ij = rand() % 1234;
-		printf("Allocating %d sector(s): \n", ij);
+		printf("\tAllocating %d sector(s) ->\t", ij);
 		uint64_t alloc = r.Allocate(ij);
-		printf("\tGot 0x%016X\n", alloc);
+		printf("0x%016X\n", alloc);
 	}
 	return 0;
 }

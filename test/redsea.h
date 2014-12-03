@@ -24,6 +24,7 @@ public:
 	uint64_t		BaseOffset() { return mBoot.base_offset; }
 	uint64_t		FirstFreeSector(int count);
 	uint64_t		Allocate(int count);
+	void			Deallocate(uint64_t, int);
 private:
 	friend class RedSeaDirEntry;
 	friend class RedSeaFile;
@@ -33,6 +34,7 @@ private:
 	uint8_t *mBitmapSectors;
 	uint64_t mBitmapLength;
 	void			Read(uint64_t location, uint64_t count, void *result);
+	void			Write(uint64_t location, uint64_t count, const void *from);
 };
 
 class RedSeaDateTime {
@@ -45,6 +47,10 @@ private:
 	uint32_t mTicks; // 49710Hz
 } __attribute__((packed));
 
+#define RS_ATTR_DIR		0x0010
+#define RS_ATTR_DELETED		0x0100
+#define RS_ATTR_COMPRESSED	0x0400
+#define RS_ATTR_CONTIGUOUS	0x0800
 
 struct RSDirEntry {
 	uint16_t mAttributes;
@@ -61,8 +67,11 @@ public:
 	bool			IsDirectory() const { return mDirEntry.mAttributes & 0x10; }
 	bool			IsFile() const { return !IsDirectory(); }
 	const char *		GetName() const { return mDirEntry.mName; }
+	void			Delete();
+	void			Flush();
 protected:
 	RSDirEntry mDirEntry;
+	uint64_t mEntryLocation;
 	RedSea *mRedSea;
 } __attribute__((packed));
 
@@ -75,11 +84,13 @@ public:
 class RedSeaDirectory : public RedSeaDirEntry {
 public:
 				RedSeaDirectory(RedSea *, uint64_t);
-	int			CountEntries() { return mEntryCount - 1; }
+				~RedSeaDirectory();
+	int			CountEntries() { return mUsedEntries; }
+	bool			AddEntry(RedSeaDirEntry *);
 	RedSeaDirEntry *	GetEntry(int i);
 	RedSeaDirectory *	Self() { return (RedSeaDirectory *)GetEntry(-1); }
 protected:
 	int mEntryCount;
+	int mUsedEntries;
+	uint16_t *mAttributes;
 };
-
-
