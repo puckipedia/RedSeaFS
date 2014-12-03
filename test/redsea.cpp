@@ -126,16 +126,26 @@ RedSea::Deallocate(uint64_t start, int count)
 
 
 void
-RedSea::Read(uint64_t location, uint64_t count, void *result) {
+RedSea::FlushBitmap()
+{
+	Write(0x200, mBitmapLength, mBitmapSectors);
+}
+
+
+void
+RedSea::Read(uint64_t location, uint64_t count, void *result)
+{
 	fseek(mFile, location, SEEK_SET);
 	fread(result, count, 1, mFile);
 }
 
 
 void
-RedSea::Write(uint64_t location, uint64_t count, const void *from) {
+RedSea::Write(uint64_t location, uint64_t count, const void *from)
+{
 	fseek(mFile, location, SEEK_SET);
 	fwrite(from, count, 1, mFile);
+	fflush(mFile);
 }
 
 
@@ -159,19 +169,20 @@ RedSeaDateTime::RedSeaDateTime(uint64_t value)
 }
 
 
-RedSeaDirEntry::RedSeaDirEntry(RedSea *rs, uint64_t location)
+RedSeaDirEntry::RedSeaDirEntry(RedSea *rs, uint64_t location, RedSeaDirectory *dir)
 {
 	rs->Read(location, sizeof(RSDirEntry), &mDirEntry);
 	mDirEntry.mCluster -= rs->BaseOffset();
 	mRedSea = rs;
 	mEntryLocation = location;
+	mDirectory = dir;
 }
 
 
 void
 RedSeaDirEntry::Delete()
 {
-	mRedSea->Deallocate(mDirEntry.mCluster, (mDirEntry.mSize + 0x200) / 0x200);
+	mRedSea->Deallocate(mDirEntry.mCluster, (mDirEntry.mSize + 0x1FF) / 0x200);
 	mDirEntry.mAttributes |= RS_ATTR_DELETED;
 }
 
@@ -179,12 +190,16 @@ RedSeaDirEntry::Delete()
 void
 RedSeaDirEntry::Flush()
 {
+	mDirEntry.mCluster += mRedSea->BaseOffset();
 	mRedSea->Write(mEntryLocation, sizeof(RSDirEntry), &mDirEntry);
+	mDirEntry.mCluster -= mRedSea->BaseOffset();
+	if (mDirectory)
+		mDirectory->Flush();
 }
 
 
-RedSeaFile::RedSeaFile(RedSea *rs, uint64_t location)
-	: RedSeaDirEntry(rs, location)
+RedSeaFile::RedSeaFile(RedSea *rs, uint64_t location, RedSeaDirectory *dir)
+	: RedSeaDirEntry(rs, location, dir)
 {
 
 }
@@ -193,17 +208,39 @@ RedSeaFile::RedSeaFile(RedSea *rs, uint64_t location)
 void
 RedSeaFile::Read(uint64_t start, uint64_t count, void *result)
 {
-	if (start > mDirEntry.mSize || start + count > mDirEntry.mSize)
+	if (start + count > mDirEntry.mSize)
 		return;
 	mRedSea->Read(start + (mDirEntry.mCluster * 0x200), count, result);
 }
 
 
-RedSeaDirectory::RedSeaDirectory(RedSea *rs, uint64_t location)
-	: RedSeaDirEntry(rs, location)
+void
+RedSeaFile::Write(uint64_t start, uint64_t count, const void *result)
+{
+	if (start + count > mDirEntry.mSize)
+		return;
+	mRedSea->Write(start + (mDirEntry.mCluster * 0x200), count, result);
+}
+
+
+RedSeaDirectory::RedSeaDirectory(RedSea *rs, uint64_t location, RedSeaDirectory *dir)
+	: RedSeaDirEntry(rs, location, dir)
 {
 	mEntryCount = mDirEntry.mSize / 64;
+
+	Flush();
+}
+
+
+void
+RedSeaDirectory::Flush()
+{
+
+	if (mAttributes)
+		delete[] mAttributes;
+
 	mAttributes = new uint16_t[mEntryCount];
+	mUsedEntries = 0;
 
 	for (int i = 1; i < mEntryCount; i++) {
 		uint64_t base = mDirEntry.mCluster * 0x200 + i * 64;
@@ -213,7 +250,6 @@ RedSeaDirectory::RedSeaDirectory(RedSea *rs, uint64_t location)
 		}
 	}
 }
-
 
 RedSeaDirectory::~RedSeaDirectory()
 {
@@ -229,7 +265,10 @@ RedSeaDirectory::GetEntry(int i)
 
 	int count = 0;
 	int j;
-	for (j = 1; j < mEntryCount && count != i; j++) {
+	for (j = 1; count != i; j++) {
+		if (j > mEntryCount)
+			return nullptr;
+
 		if (mAttributes[j] != 0x0000 && !(mAttributes[j] & RS_ATTR_DELETED)) {
 			count++;
 		}
@@ -244,15 +283,118 @@ RedSeaDirectory::GetEntry(int i)
 	}
 
 	if (mAttributes[i] & RS_ATTR_DIR) {
-		return new RedSeaDirectory(mRedSea, base);
+		return new RedSeaDirectory(mRedSea, base, this);
 	} else {
-		return new RedSeaFile(mRedSea, base);
+		return new RedSeaFile(mRedSea, base, this);
 	}
 }
 
 
 RedSeaDirectory *
+RedSeaDirectory::Self()
+{
+	return new RedSeaDirectory(mRedSea, mDirEntry.mCluster * 0x200, this);
+}
+
+
+RedSeaFile *
+RedSeaDirectory::CreateFile(const char *name, int size)
+{
+	if (mEntryCount == mUsedEntries)
+		return nullptr;
+
+	int sectors = (size + 0x1FF) / 0x200;
+	uint64_t location = mRedSea->Allocate(sectors);
+
+	if (location == UINT64_MAX)
+		return nullptr;
+
+	int j;
+	for (j = 1; j < mEntryCount; j++) {
+		if ((mAttributes[j] & RS_ATTR_DELETED) || mAttributes[j] == 0) {
+			break;
+		}
+	}
+
+	RedSeaDirEntry ent(mRedSea, mDirEntry.mCluster * 0x200 + j * 64, this);
+	RSDirEntry &d = ent.DirEntry();
+	d.mAttributes = RS_ATTR_CONTIGUOUS;
+	strncpy(d.mName, name, 37);
+	d.mName[37] = 0;
+	d.mCluster = location;
+	d.mSize = size;
+
+	ent.Flush();
+
+	return new RedSeaFile(mRedSea, mDirEntry.mCluster * 0x200 + j * 64, this);
+}
+
+RedSeaDirectory *
+RedSeaDirectory::CreateDirectory(const char *name, int space)
+{
+	if (mEntryCount == mUsedEntries)
+		return nullptr;
+
+	char zerobuffer[0x200] = {0};
+
+	int sectors = (space * 64 + 0x1FF) / 0x200;
+	uint64_t location = mRedSea->Allocate(sectors);
+
+	if (location == UINT64_MAX)
+		return nullptr;
+
+	int bytes = sectors * 0x200;
+	uint64_t loc = location * 0x200;
+
+	while (bytes > 0) {
+		mRedSea->Write(loc, 0x200, zerobuffer);
+		loc += 0x200;
+		bytes -= 0x200;
+	}
+
+	RedSeaDirEntry d(mRedSea, location * 0x200, this);
+
+	RSDirEntry &ent = d.DirEntry();
+	ent.mAttributes = RS_ATTR_DIR | RS_ATTR_CONTIGUOUS;
+	strncpy(ent.mName, name, 37);
+	ent.mCluster = location;
+	ent.mSize = sectors * 0x200;
+	d.Flush();
+
+	RedSeaDirEntry parent(mRedSea, location * 0x200 + 64, this);
+
+	RSDirEntry &pent = parent.DirEntry();
+	pent.mAttributes = RS_ATTR_DIR | RS_ATTR_CONTIGUOUS;
+	strncpy(pent.mName, "..", 3);
+	pent.mCluster = mDirEntry.mCluster;
+	pent.mSize = mDirEntry.mSize;
+	parent.Flush();
+
+	int j;
+	for (j = 1; j < mEntryCount; j++) {
+		if ((mAttributes[j] & RS_ATTR_DELETED) || mAttributes[j] == 0) {
+			break;
+		}
+	}
+
+	mAttributes[j] = RS_ATTR_DIR | RS_ATTR_CONTIGUOUS;
+
+	RedSeaDirEntry child(mRedSea, mDirEntry.mCluster * 0x200 + j * 64, this);
+
+	RSDirEntry &cent = child.DirEntry();
+	cent.mAttributes = RS_ATTR_DIR | RS_ATTR_CONTIGUOUS;
+	strncpy(cent.mName, name, 37);
+	cent.mCluster = location;
+	cent.mSize = sectors * 0x200;
+	child.Flush();
+
+	mUsedEntries++;
+
+	return new RedSeaDirectory(mRedSea, location * 0x200, this);
+}
+
+RedSeaDirectory *
 RedSea::RootDirectory()
 {
-	return new RedSeaDirectory(this, (mBoot.root_sector - mBoot.base_offset) * 0x200);
+	return new RedSeaDirectory(this, (mBoot.root_sector - mBoot.base_offset) * 0x200, nullptr);
 }
