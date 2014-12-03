@@ -46,12 +46,9 @@ RedSea::RedSea(FILE *f)
 	Read(0x200, mBitmapLength * 0x200, mBitmapSectors);
 }
 
-//#define UINT64_MAX 0xFFFFFFFFFFFFFFFF
-
 uint64_t
 RedSea::FirstFreeSector(int count)
 {
-	//printf("Finding %d sectors next to each other...\n");
 	int i;
 	uint64_t start = UINT64_MAX;
 	int ccount = 0;
@@ -59,17 +56,13 @@ RedSea::FirstFreeSector(int count)
 		int bi, ci;
 		for (bi = 1, ci = 0; ci < 8; bi <<= 1, ci++) {
 			if (!(mBitmapSectors[i] & bi)) {
-				//printf("Found free sector 0x%016X-%d\n", i, ci);
 				if (start == UINT64_MAX) {
-					//printf("\tStart updated\n");
 					start = (i << 3) | ci;
 				}
 				ccount++;
 				if (ccount >= count)
 					return start;
-				//printf("Count is now %d\n", ccount);
 			} else {
-				//printf("Full sector, 0x%016X-%d - %d > %d?\n", i, ci, ccount, count);
 				if (ccount >= count)
 					return start;
 				start = ~0;
@@ -101,7 +94,6 @@ RedSea::Allocate(int count)
 
 	if (start == end) {
 		for (int i = startbit; i <= endbit; i++) {
-			printf("Set 0x%016X %d to 1\n", start, i);
 			mBitmapSectors[start] |= (1 << i);
 		}
 	} else {
