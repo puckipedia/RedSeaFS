@@ -4,7 +4,7 @@
 #include <fs_query.h>
 #include <fs_volume.h>
 
-#include <ObjectList.h>
+// #include <ObjectList.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -154,6 +154,7 @@ status_t redsea_read_stat(fs_volume *volume, fs_vnode *vnode,
 
 status_t redsea_unmount(fs_volume *volume)
 {
+	/*
 	RedSea *rs = (RedSea *)volume->private_volume;
 	BObjectList<RedSeaDirEntry> entries;
 	BObjectList<RedSeaDirectory> directoriesToTraverse;
@@ -180,7 +181,7 @@ status_t redsea_unmount(fs_volume *volume)
 		delete entr;
 		entries.RemoveItemAt(i);
 		i--;
-	}
+	}*/
 	
 	return B_OK;
 }
@@ -407,16 +408,14 @@ ino_t ino_for_dirent(fs_volume *volume, RedSeaDirEntry *entry, bool remove)
 {
 	void *private_node;
 	ino_t presumed = (ino_t)entry->DirEntry().mCluster;
-	status_t result = get_vnode(volume, presumed, &private_node);
+	status_t result = new_vnode(volume, presumed, entry, &gRedSeaFSVnodeOps);
+	publish_vnode(volume, presumed, entry, &gRedSeaFSVnodeOps,
+		(entry->IsDirectory() ? S_IFDIR : S_IFREG), 0);
 
-	if (result != B_OK) {
-		if((result = new_vnode(volume, presumed, entry, &gRedSeaFSVnodeOps)) != B_OK) {
-			return 0;
-		}
-	} else {
-		if (remove)
-			delete entry;
-	}
+	// TODO: Kinda-bad hack
+
+	if (result == B_OK && remove)
+		delete entry;
 
 	return presumed;
 }
