@@ -43,39 +43,6 @@ redsea_std_ops(int32 op, ...)
 	}
 }
 
-struct dir_cookie {
-	int index;
-};
-
-
-status_t redsea_open_dir(fs_volume *volume, fs_vnode *vnode, void **cookie) {
-	RedSeaDirEntry *entr = (RedSeaDirEntry *)vnode->private_node;
-
-	if (!entr->IsDirectory())
-		return B_ERROR;
-
-	struct dir_cookie *c = (struct dir_cookie *)malloc(sizeof(struct dir_cookie));
-	c->index = 0;
-	*cookie = c;
-	
-	return B_OK;
-}
-
-
-status_t redsea_close_dir(fs_volume *volume, fs_vnode *vnode, void *cookie)
-{
-	free(cookie);
-	return B_OK;
-}
-
-
-status_t redsea_read_dir(fs_volume *volume, fs_vnode *vnode, void *cookie,
-	struct dirent *buffer, size_t buffersize, uint32 *num)
-{
-	return B_ERROR;
-}
-
-
 status_t redsea_lookup(fs_volume *volume, fs_vnode *v_dir, const char *name, ino_t *id)
 {
 	RedSeaDirEntry *entr = (RedSeaDirEntry *)v_dir->private_node;
@@ -164,6 +131,31 @@ status_t redsea_access(fs_volume* volume, fs_vnode *vnode, int mode)
 }
 
 
+status_t redsea_read_stat(fs_volume *volume, fs_vnode *vnode,
+	struct stat *stat)
+{
+	RedSeaDirEntry *entry = (RedSeaDirEntry *)vnode->private_node;
+	stat->st_dev = volume->id;
+	stat->st_ino = ino_for_dirent(volume, entry, false);
+	stat->st_mode = ALLPERMS;
+	stat->st_nlink = 0;
+	stat->st_uid = 0;
+	stat->st_gid = 0;
+	stat->st_size = entry->DirEntry().mSize;
+	stat->st_rdev = 0;
+	stat->st_blksize = 0x200;
+	stat->st_type = (entry->IsDirectory() ? S_IFDIR : S_IFREG);
+	return B_OK;
+}
+
+
+status_t redsea_write_stat(fs_volume *volume, fs_vnode *vnode,
+	const struct stat *stat, uint32 statmask)
+{
+	return B_ERROR;
+}
+
+
 status_t redsea_create(fs_volume *volume, fs_vnode *dir, const char *name,
 	int openmode, int perms, void **cookie, ino_t *newVnodeId)
 {
@@ -224,6 +216,73 @@ status_t redsea_write(fs_volume *volume, fs_vnode *vnode, void *cookie,
 	return B_OK;
 }
 
+struct DirCookie {
+	int index;
+};
+
+
+status_t redsea_open_dir(fs_volume *volume, fs_vnode *vnode, void **cookie) {
+	RedSeaDirEntry *entr = (RedSeaDirEntry *)vnode->private_node;
+
+	if (!entr->IsDirectory())
+		return B_ERROR;
+
+	DirCookie *c = (DirCookie *)malloc(sizeof(DirCookie));
+	c->index = 0;
+	*cookie = c;
+	
+	return B_OK;
+}
+
+
+status_t redsea_close_dir(fs_volume *volume, fs_vnode *vnode, void *cookie)
+{
+	return B_OK;
+}
+
+status_t redsea_free_dir_cookie(fs_volume *volume, fs_vnode *vnode, void *cookie)
+{
+	delete (DirCookie *)cookie;
+	return B_OK;
+}
+
+
+status_t redsea_read_dir(fs_volume *volume, fs_vnode *vnode, void *cookie,
+	struct dirent *buffer, size_t buffersize, uint32 *num)
+{
+	RedSeaDirectory *dir = (RedSeaDirectory *)vnode->private_node;
+	DirCookie *dircookie = (DirCookie *)cookie;
+	
+	RedSeaDirEntry *entry = dir->GetEntry(dircookie->index++);
+	
+	buffer->d_dev = volume->id;
+	buffer->d_ino = ino_for_dirent(volume, entry, false);
+	buffer->d_reclen = sizeof(struct dirent) - 1;
+	
+	size_t namesize = buffersize - sizeof(struct dirent) - 1;
+	int namelength = strlen(entry->Name());
+	
+	if (namelength > namesize) {
+		namesize--;
+		buffer->d_name[namesize] = 0;
+	}
+	
+	strncpy(buffer->d_name, entry->Name(), namesize);
+
+	*num = 1;
+	return B_OK;
+}
+
+
+status_t redsea_rewind_dir(fs_volume *volume, fs_vnode *vnode, void *cookie)
+{
+	RedSeaDirectory *dir = (RedSeaDirectory *)vnode->private_node;
+	DirCookie *dircookie = (DirCookie *)cookie;
+	dircookie->index = 0;
+	
+	return B_OK;
+}
+
 
 fs_vnode_ops gRedSeaFSVnodeOps = {
 	// vnode operations
@@ -256,8 +315,8 @@ fs_vnode_ops gRedSeaFSVnodeOps = {
 	redsea_rename, // rename,
 
 	redsea_access, // access,
-	NULL, // read_stat,
-	NULL, // write_stat,
+	redsea_read_stat, // read_stat,
+	redsea_write_stat, // write_stat,
 	NULL,   // NULL, // preallocate,
 
 	// file operations
@@ -271,11 +330,11 @@ fs_vnode_ops gRedSeaFSVnodeOps = {
 	// directory operations
 	NULL, // create_dir,
 	NULL, // remove_dir,
-	NULL, // open_dir,
-	NULL, // close_dir,
-	NULL, // free_dir_cookie,
-	NULL, // read_dir,
-	NULL, // rewind_dir,
+	redsea_open_dir, // open_dir,
+	redsea_close_dir, // close_dir,
+	redsea_free_dir_cookie, // free_dir_cookie,
+	redsea_read_dir, // read_dir,
+	redsea_rewind_dir, // rewind_dir,
 
 	// attribute directory operations
 	NULL, // open_attr_dir,
