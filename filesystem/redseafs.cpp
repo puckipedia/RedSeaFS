@@ -414,7 +414,7 @@ ino_t ino_for_dirent(fs_volume *volume, RedSeaDirEntry *entry, bool remove)
 
 	// TODO: Kinda-bad hack
 
-	if (result == B_OK && remove)
+	if (result != B_OK && remove)
 		delete entry;
 
 	return presumed;
@@ -463,9 +463,7 @@ status_t redsea_mount(fs_volume *volume, const char *device, uint32 flags,
 	
 	volume->ops = &gRedSeaFSVolumeOps;
 	
-	new_vnode(volume, 0, r.RootDirectory(), &gRedSeaFSVnodeOps);
-	
-	*_rootVnodeID = 0;
+	*_rootVnodeID = ino_for_dirent(volume, r.RootDirectory(), true);
 	
 	return B_OK;
 }
