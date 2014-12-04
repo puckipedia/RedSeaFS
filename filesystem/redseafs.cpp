@@ -289,14 +289,20 @@ status_t redsea_read_dir(fs_volume *volume, fs_vnode *vnode, void *cookie,
 	RedSeaDirectory *dir = (RedSeaDirectory *)vnode->private_node;
 	DirCookie *dircookie = (DirCookie *)cookie;
 	
+	if (dircookie->index >= dir->CountEntries()) {
+		*num = 0;
+		return B_OK;
+	}
+	
 	RedSeaDirEntry *entry = dir->GetEntry(dircookie->index++);
 	
 	buffer->d_dev = volume->id;
 	buffer->d_ino = ino_for_dirent(volume, entry, false);
-	buffer->d_reclen = sizeof(struct dirent) - 1;
 	
 	size_t namesize = buffersize - sizeof(struct dirent) - 1;
 	int namelength = strlen(entry->Name());
+	buffer->d_reclen = sizeof(struct dirent) - 1 +
+		(namesize > namelength ? namelength : namesize);
 	
 	if (namelength > namesize) {
 		namesize--;
