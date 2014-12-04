@@ -53,14 +53,12 @@ status_t redsea_lookup(fs_volume *volume, fs_vnode *v_dir, const char *name, ino
 	
 	RedSeaDirectory *dir = (RedSeaDirectory *)entr;
 	
-	for (int i = 0; i < dir->CountEntries(); i++)
-	{
-		RedSeaDirEntry *entry = dir->GetEntry(i);
-		if (strcmp(entry->Name(), name) == 0) {
-			*id = ino_for_dirent(volume, entry);
-			return B_OK;
-		}
-		delete entry;
+	RedSeaDirEntry *entry = entry_for_name(dir, name);
+
+	if (entry != NULL) {
+		*id = ino_for_dirent(volume, entry);
+		put_vnode(volume, *id);
+		return B_OK;
 	}
 	
 	return B_ERROR;
@@ -137,16 +135,12 @@ status_t redsea_read_stat(fs_volume *volume, fs_vnode *vnode,
 	struct stat *stat)
 {
 	RedSeaDirEntry *entry = (RedSeaDirEntry *)vnode->private_node;
-	stat->st_dev = volume->id;
-	stat->st_ino = entry->DirEntry().mCluster;
 	stat->st_mode = ALLPERMS | (entry->IsDirectory() ? S_IFDIR : S_IFREG);
 	stat->st_nlink = 0;
 	stat->st_uid = 0;
 	stat->st_gid = 0;
 	stat->st_size = entry->DirEntry().mSize;
-	stat->st_rdev = 0;
 	stat->st_blksize = 0x200;
-	stat->st_type = 0;
 	stat->st_blocks = (stat->st_size + 0x1FF) / 0x200;
 	return B_OK;
 }
@@ -299,15 +293,16 @@ status_t redsea_read_dir(fs_volume *volume, fs_vnode *vnode, void *cookie,
 	
 	buffer->d_dev = volume->id;
 	buffer->d_ino = ino_for_dirent(volume, entry, false);
-	
+
+	put_vnode(volume, buffer->d_ino);
+
 	size_t namesize = buffersize - sizeof(struct dirent) - 1;
 	int namelength = strlen(entry->Name());
 	buffer->d_reclen = sizeof(struct dirent) - 1 +
 		(namesize > namelength ? namelength : namesize);
 	
 	if (namelength > namesize) {
-		namesize--;
-		buffer->d_name[namesize] = 0;
+		return B_BUFFER_OVERFLOW;
 	}
 	
 	strncpy(buffer->d_name, entry->Name(), namesize);
@@ -464,6 +459,7 @@ status_t redsea_mount(fs_volume *volume, const char *device, uint32 flags,
 	volume->ops = &gRedSeaFSVolumeOps;
 	
 	*_rootVnodeID = ino_for_dirent(volume, r.RootDirectory(), true);
+	put_vnode(volume, *_rootVnodeID);
 	
 	return B_OK;
 }
