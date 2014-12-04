@@ -139,14 +139,14 @@ status_t redsea_read_stat(fs_volume *volume, fs_vnode *vnode,
 	RedSeaDirEntry *entry = (RedSeaDirEntry *)vnode->private_node;
 	stat->st_dev = volume->id;
 	stat->st_ino = entry->DirEntry().mCluster;
-	stat->st_mode = ALLPERMS;
+	stat->st_mode = ALLPERMS | (entry->IsDirectory() ? S_IFDIR : S_IFREG);
 	stat->st_nlink = 0;
 	stat->st_uid = 0;
 	stat->st_gid = 0;
 	stat->st_size = entry->DirEntry().mSize;
 	stat->st_rdev = 0;
 	stat->st_blksize = 0x200;
-	stat->st_type = (entry->IsDirectory() ? S_IFDIR : S_IFREG);
+	stat->st_type = 0;
 	stat->st_blocks = (stat->st_size + 0x1FF) / 0x200;
 	return B_OK;
 }
