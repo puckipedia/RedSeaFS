@@ -228,7 +228,8 @@ RedSeaFile::Write(uint64_t start, uint64_t count, const void *result)
 
 
 RedSeaDirectory::RedSeaDirectory(RedSea *rs, uint64_t location, RedSeaDirectory *dir)
-	: RedSeaDirEntry(rs, location, dir)
+	: RedSeaDirEntry(rs, location, dir),
+	mAttributes(0)
 {
 	mEntryCount = mDirEntry.mSize / 64;
 
@@ -283,7 +284,6 @@ RedSeaDirectory::RemoveEntry(RedSeaDirEntry *entry)
 void
 RedSeaDirectory::Flush()
 {
-
 	if (mAttributes)
 		delete[] mAttributes;
 
