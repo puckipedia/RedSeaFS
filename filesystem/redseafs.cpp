@@ -302,7 +302,7 @@ fs_vnode_ops gRedSeaFSVnodeOps = {
 };
 
 
-ino_t inode_for_dirent(fs_volume *volume, RedSeaDirEntry *entry, bool remove)
+ino_t ino_for_dirent(fs_volume *volume, RedSeaDirEntry *entry, bool remove)
 {
 	void *private_node;
 	ino_t presumed = (ino_t)entry->DirEntry().mCluster;
