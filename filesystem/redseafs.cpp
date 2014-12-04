@@ -4,6 +4,8 @@
 #include <fs_query.h>
 #include <fs_volume.h>
 
+#include <ObjectList.h>
+
 #include <stdlib.h>
 #include <string.h>
 #include "redsea.h"
@@ -136,7 +138,7 @@ status_t redsea_read_stat(fs_volume *volume, fs_vnode *vnode,
 {
 	RedSeaDirEntry *entry = (RedSeaDirEntry *)vnode->private_node;
 	stat->st_dev = volume->id;
-	stat->st_ino = ino_for_dirent(volume, entry, false);
+	stat->st_ino = entry->DirEntry().mCluster;
 	stat->st_mode = ALLPERMS;
 	stat->st_nlink = 0;
 	stat->st_uid = 0;
@@ -145,9 +147,43 @@ status_t redsea_read_stat(fs_volume *volume, fs_vnode *vnode,
 	stat->st_rdev = 0;
 	stat->st_blksize = 0x200;
 	stat->st_type = (entry->IsDirectory() ? S_IFDIR : S_IFREG);
+	stat->st_blocks = (stat->st_size + 0x1FF) / 0x200;
 	return B_OK;
 }
 
+
+status_t redsea_unmount(fs_volume *volume)
+{
+	RedSea *rs = (RedSea *)volume->private_volume;
+	BObjectList<RedSeaDirEntry> entries;
+	BObjectList<RedSeaDirectory> directoriesToTraverse;
+	directoriesToTraverse.AddItem(rs->RootDirectory());
+	for (int i = 0; i < directoriesToTraverse.CountItems(); i++) {
+		RedSeaDirectory *dir = directoriesToTraverse.ItemAt(i);
+		for (int j = 0; j < dir->CountEntries(); j++) {
+			RedSeaDirEntry *entr = dir->GetEntry(j);
+			if (entr->IsDirectory()) {
+				directoriesToTraverse.AddItem((RedSeaDirectory *)entr);
+			} else {
+				entries.AddItem(entr);
+			}
+		}
+		directoriesToTraverse.RemoveItemAt(i);
+		i--;
+
+		entries.AddItem(dir);
+	}
+	
+	for (int i = 0; i < entries.CountItems(); i++) {
+		RedSeaDirEntry *entr = entries.ItemAt(i);
+		remove_vnode(volume, entr->DirEntry().mCluster);
+		delete entr;
+		entries.RemoveItemAt(i);
+		i--;
+	}
+	
+	return B_OK;
+}
 
 status_t redsea_write_stat(fs_volume *volume, fs_vnode *vnode,
 	const struct stat *stat, uint32 statmask)
@@ -368,8 +404,9 @@ ino_t ino_for_dirent(fs_volume *volume, RedSeaDirEntry *entry, bool remove)
 	status_t result = get_vnode(volume, presumed, &private_node);
 
 	if (result != B_OK) {
-		if((result = new_vnode(volume, presumed, entry, &gRedSeaFSVnodeOps)) != B_OK)
+		if((result = new_vnode(volume, presumed, entry, &gRedSeaFSVnodeOps)) != B_OK) {
 			return 0;
+		}
 	} else {
 		if (remove)
 			delete entry;
@@ -378,11 +415,6 @@ ino_t ino_for_dirent(fs_volume *volume, RedSeaDirEntry *entry, bool remove)
 	return presumed;
 }
 
-
-status_t redsea_unmount(fs_volume *volume)
-{
-	return B_OK;	
-}
 fs_volume_ops gRedSeaFSVolumeOps = {
 	redsea_unmount, // unmount,
 	NULL, // read_fs_info
