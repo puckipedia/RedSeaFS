@@ -19,23 +19,23 @@ struct RSBoot {
 
 class RedSea {
 public:
-				RedSea(FILE *f);
+				RedSea(int f);
 	RedSeaDirectory *	RootDirectory();
-	uint64_t		BaseOffset() { return mBoot.base_offset; }
-	uint64_t		FirstFreeSector(int count);
-	uint64_t		Allocate(int count);
-	void			Deallocate(uint64_t, int);
-	void			FlushBitmap();
+	uint64_t			BaseOffset() { return mBoot.base_offset; }
+	uint64_t			FirstFreeSector(int count);
+	uint64_t			Allocate(int count);
+	void				Deallocate(uint64_t, int);
+	void				FlushBitmap();
 private:
-	friend class RedSeaDirEntry;
-	friend class RedSeaFile;
-	friend class RedSeaDirectory;
-	FILE *mFile;
-	RSBoot mBoot;
-	uint8_t *mBitmapSectors;
-	uint64_t mBitmapLength;
-	void			Read(uint64_t location, uint64_t count, void *result);
-	void			Write(uint64_t location, uint64_t count, const void *from);
+	friend class 		RedSeaDirEntry;
+	friend class 		RedSeaFile;
+	friend class 		RedSeaDirectory;
+	int					mFile;
+	RSBoot				mBoot;
+	uint8_t *			mBitmapSectors;
+	uint64_t			mBitmapLength;
+	uint64_t			Read(uint64_t location, uint64_t count, void *result);
+	uint64_t			Write(uint64_t location, uint64_t count, const void *from);
 };
 
 class RedSeaDateTime {
@@ -64,11 +64,12 @@ struct RSDirEntry {
 
 class RedSeaDirEntry {
 public:
-				RedSeaDirEntry(RedSea *, uint64_t, RedSeaDirectory *);
+					RedSeaDirEntry(RedSea *, uint64_t, RedSeaDirectory *);
 	bool			IsDirectory() const { return mDirEntry.mAttributes & RS_ATTR_DIR; }
 	bool			IsFile() const { return !IsDirectory(); }
-	const char *		Name() const { return mDirEntry.mName; }
-	RSDirEntry &		DirEntry() { return mDirEntry; }
+	const char *	Name() const { return mDirEntry.mName; }
+	RSDirEntry &	DirEntry() { return mDirEntry; }
+	uint64_t		EntryLocation() const { return mEntryLocation; }
 	void			Delete();
 	void			Flush();
 protected:
@@ -80,23 +81,24 @@ protected:
 
 class RedSeaFile : public RedSeaDirEntry {
 public:
-				RedSeaFile(RedSea *, uint64_t, RedSeaDirectory *);
-	void			Read(uint64_t start, uint64_t count, void *result);
-	void			Write(uint64_t start, uint64_t count, const void *result);
+					RedSeaFile(RedSea *, uint64_t, RedSeaDirectory *);
+	uint64_t		Read(uint64_t start, uint64_t count, void *result);
+	uint64_t		Write(uint64_t start, uint64_t count, const void *result);
 private:
 };
 
 class RedSeaDirectory : public RedSeaDirEntry {
 public:
-				RedSeaDirectory(RedSea *, uint64_t, RedSeaDirectory *);
-				~RedSeaDirectory();
-	int			CountEntries() { return mUsedEntries; }
-	bool			AddEntry(RedSeaDirEntry *);
+						RedSeaDirectory(RedSea *, uint64_t, RedSeaDirectory *);
+						~RedSeaDirectory();
+	int					CountEntries() { return mUsedEntries; }
+	int					AddEntry(RedSeaDirEntry *);
 	RedSeaDirEntry *	GetEntry(int i);
 	RedSeaDirectory *	Self();
 	RedSeaDirectory *	CreateDirectory(const char *name, int space);
 	RedSeaFile *		CreateFile(const char *name, int size);
-	void			Flush();
+	bool				RemoveEntry(RedSeaDirEntry *);
+	void				Flush();
 protected:
 	int mEntryCount;
 	int mUsedEntries;

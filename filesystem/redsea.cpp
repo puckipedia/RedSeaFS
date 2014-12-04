@@ -4,8 +4,9 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <unistd.h>
 
-RedSea::RedSea(FILE *f)
+RedSea::RedSea(int f)
 {
 	mFile = f;
 	Read(0, 0x200, &mBoot);
@@ -132,20 +133,19 @@ RedSea::FlushBitmap()
 }
 
 
-void
+uint64_t
 RedSea::Read(uint64_t location, uint64_t count, void *result)
 {
-	fseek(mFile, location, SEEK_SET);
-	fread(result, count, 1, mFile);
+	lseek(mFile, location, SEEK_SET);
+	return read(mFile, result, count);
 }
 
 
-void
+uint64_t
 RedSea::Write(uint64_t location, uint64_t count, const void *from)
 {
-	fseek(mFile, location, SEEK_SET);
-	fwrite(from, count, 1, mFile);
-	fflush(mFile);
+	lseek(mFile, location, SEEK_SET);
+	return write(mFile, from, count);
 }
 
 
@@ -205,21 +205,25 @@ RedSeaFile::RedSeaFile(RedSea *rs, uint64_t location, RedSeaDirectory *dir)
 }
 
 
-void
+uint64_t
 RedSeaFile::Read(uint64_t start, uint64_t count, void *result)
 {
+	if (start > mDirEntry.mSize)
+		return UINT64_MAX;
 	if (start + count > mDirEntry.mSize)
-		return;
-	mRedSea->Read(start + (mDirEntry.mCluster * 0x200), count, result);
+		count = mDirEntry.mSize - start;
+	return mRedSea->Read(start + (mDirEntry.mCluster * 0x200), count, result);
 }
 
 
-void
+uint64_t
 RedSeaFile::Write(uint64_t start, uint64_t count, const void *result)
 {
+	if (start > mDirEntry.mSize)
+		return UINT64_MAX;
 	if (start + count > mDirEntry.mSize)
-		return;
-	mRedSea->Write(start + (mDirEntry.mCluster * 0x200), count, result);
+		count = mDirEntry.mSize - start;
+	return mRedSea->Write(start + (mDirEntry.mCluster * 0x200), count, result);
 }
 
 
@@ -231,6 +235,50 @@ RedSeaDirectory::RedSeaDirectory(RedSea *rs, uint64_t location, RedSeaDirectory 
 	Flush();
 }
 
+
+int
+RedSeaDirectory::AddEntry(RedSeaDirEntry *entry)
+{
+	if (mEntryCount == mUsedEntries)
+		return -1;
+
+	int j;
+	for (j = 1; j < mEntryCount; j++) {
+		if ((mAttributes[j] & RS_ATTR_DELETED) || mAttributes[j] == 0) {
+			break;
+		}
+	}
+	
+	mUsedEntries++;
+	
+	RSDirEntry &ent = entry->DirEntry();
+	
+	RedSeaDirEntry entr(mRedSea, mDirEntry.mCluster * 0x200 + j * 64, this);
+	RSDirEntry &nent = entr.DirEntry();
+	nent.mAttributes = ent.mAttributes;
+	strcpy(nent.mName, ent.mName);
+	nent.mCluster = ent.mCluster;
+	nent.mSize = ent.mSize;
+	nent.mDateTime = ent.mDateTime;
+	
+	entr.Flush();
+	return j;
+}
+
+
+bool
+RedSeaDirectory::RemoveEntry(RedSeaDirEntry *entry)
+{
+	uint64_t location = entry->EntryLocation() - mDirEntry.mCluster * 0x200;
+	location /= 64;
+	
+	if (location > mEntryCount)
+		return false;
+	
+	entry->DirEntry().mAttributes |= RS_ATTR_DELETED;
+	entry->Flush();
+	return true;
+}
 
 void
 RedSeaDirectory::Flush()
