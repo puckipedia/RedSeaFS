@@ -106,6 +106,8 @@ status_t redsea_unlink(fs_volume *volume, fs_vnode *v_dir, const char *name)
 status_t redsea_rename(fs_volume *volume, fs_vnode *dir, const char *fromName,
 	fs_vnode *todir, const char *toName)
 {
+	return B_READ_ONLY_DEVICE;
+/*	
 	RedSeaDirectory *from = (RedSeaDirectory *)dir->private_node;
 	RedSeaDirectory *to = (RedSeaDirectory *)todir->private_node;
 	
@@ -123,7 +125,7 @@ status_t redsea_rename(fs_volume *volume, fs_vnode *dir, const char *fromName,
 	}
 	
 	delete fromnode;
-	return B_OK;
+	return B_OK;*/
 }
 
 
