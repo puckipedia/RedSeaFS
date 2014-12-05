@@ -27,6 +27,8 @@ public:
 	void				Deallocate(uint64_t, int);
 	void				FlushBitmap();
 	bool				Valid() { return mIsValid; }
+	RSBoot &			BootStructure() { return mBoot; }
+	int					UsedClusters();
 private:
 	friend class 		RedSeaDirEntry;
 	friend class 		RedSeaFile;

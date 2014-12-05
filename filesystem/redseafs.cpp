@@ -417,9 +417,34 @@ ino_t ino_for_dirent(fs_volume *volume, RedSeaDirEntry *entry, bool remove)
 	return presumed;
 }
 
+status_t redsea_read_fs_info(fs_volume* volume, struct fs_info* info)
+{
+	RedSea *rs = (RedSea *)volume->private_volume;
+
+	if (rs == NULL)
+		return B_ERROR;
+
+	RedSeaDirectory *root = rs->RootDirectory();
+	info->root = root->DirEntry().mCluster;
+	
+	info->flags = B_FS_IS_READONLY;
+	info->block_size = 0x200;
+	info->io_size = 0x200;
+	info->total_blocks = rs->BootStructure().count;
+	info->free_blocks = info->total_blocks - rs->UsedClusters();
+
+	info->total_nodes = info->total_blocks * 8;
+	info->free_nodes = info->free_blocks * 8;
+	
+	strcpy(info->volume_name, "RedSea Volume");
+	strcpy(info->fsh_name, "RedSeaFS");
+
+	return B_OK;
+}
+
 fs_volume_ops gRedSeaFSVolumeOps = {
 	redsea_unmount, // unmount,
-	NULL, // read_fs_info
+	redsea_read_fs_info, // read_fs_info
 	NULL, // write_fs_info
 	NULL, // sync
 	NULL, // read_vnode,
@@ -454,17 +479,21 @@ status_t redsea_mount(fs_volume *volume, const char *device, uint32 flags,
 {
 	int fd = open(device, O_RDWR | O_NOCACHE);
 
-	RedSea r(fd);
+	RedSea *rs = new RedSea(fd);
 	
-	if (!r.Valid())
+	if (!rs->Valid()) {
+		delete rs;
 		return B_ERROR;
+	}
 	
 	volume->ops = &gRedSeaFSVolumeOps;
+	volume->private_volume = rs;
 	
-	*_rootVnodeID = ino_for_dirent(volume, r.RootDirectory(), true);
+	*_rootVnodeID = ino_for_dirent(volume, rs->RootDirectory(), true);
 	
 	return B_OK;
 }
+
 
 static file_system_module_info sRedSeaModuleInfo = {
 	{

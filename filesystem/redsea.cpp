@@ -24,6 +24,28 @@ RedSea::RedSea(int f)
 }
 
 
+const uint64_t m1  = (uint64_t)0x5555555555555555LL;
+const uint64_t m2  = (uint64_t)0x3333333333333333LL;
+const uint64_t m4  = (uint64_t)0x0f0f0f0f0f0f0f0fLL;
+const uint64_t h01 = (uint64_t)0x0101010101010101LL;
+
+int popcount(uint64_t x) {
+    x -= (x >> 1) & m1;
+    x = (x & m2) + ((x >> 2) & m2);
+    x = (x + (x >> 4)) & m4;
+    return (x * h01) >> 56;
+}
+
+
+int
+RedSea::UsedClusters()
+{
+	int result = 0;
+	for (int i = 0; i < mBitmapLength; i++)
+		result += popcount(mBitmapSectors[i]);
+	return result;
+}
+
 uint64_t
 RedSea::FirstFreeSector(int count)
 {
