@@ -15,6 +15,8 @@ RedSea::RedSea(int f)
 		mIsValid = false;
 		return;
 	}
+	
+	mIsValid = true;
 
 	mBitmapLength = mBoot.bitmap_sectors * 0x200;
 	mBitmapSectors = new uint8_t[mBitmapLength];
