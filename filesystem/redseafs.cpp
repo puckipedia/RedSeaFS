@@ -16,6 +16,9 @@ ino_t ino_for_dirent(fs_volume *volume, RedSeaDirEntry *entry, bool remove = fal
 
 RedSeaDirEntry *entry_for_name(RedSeaDirectory *directory, const char *name)
 {
+	if (strcmp(".", name) == 0)
+		return directory->Self(); // create copy of directory
+	
 	for (int i = 0; i < directory->CountEntries(); i++)
 	{
 		RedSeaDirEntry *entry = directory->GetEntry(i);
@@ -449,7 +452,7 @@ uint32 redsea_get_supported_operations(partition_data *data, uint32 mask)
 status_t redsea_mount(fs_volume *volume, const char *device, uint32 flags,
 	const char *args, ino_t *_rootVnodeID)
 {
-	int fd = open(device, O_RDWRz | O_NOCACHE);
+	int fd = open(device, O_RDWR | O_NOCACHE);
 	printf("FD: %d\n", fd);
 
 	RedSea r(fd);
