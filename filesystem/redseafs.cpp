@@ -137,7 +137,7 @@ status_t redsea_read_stat(fs_volume *volume, fs_vnode *vnode,
 	struct stat *stat)
 {
 	RedSeaDirEntry *entry = (RedSeaDirEntry *)vnode->private_node;
-	stat->st_mode = ALLPERMS | (entry->IsDirectory() ? S_IFDIR : S_IFREG);
+	stat->st_mode = DEFFILEMODE | (entry->IsDirectory() ? S_IFDIR : S_IFREG);
 	stat->st_nlink = 0;
 	stat->st_uid = 0;
 	stat->st_gid = 0;
