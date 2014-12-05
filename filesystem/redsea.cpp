@@ -10,6 +10,12 @@ RedSea::RedSea(int f)
 {
 	mFile = f;
 	Read(0, 0x200, &mBoot);
+
+	if (mBoot.signature != 0x88 || mBoot.signature2 != 0xAA55) {
+		mIsValid = false;
+		return;
+	}
+
 	mBitmapLength = mBoot.bitmap_sectors * 0x200;
 	mBitmapSectors = new uint8_t[mBitmapLength];
 	Read(0x200, mBitmapLength * 0x200, mBitmapSectors);

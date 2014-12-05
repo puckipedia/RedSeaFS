@@ -26,10 +26,12 @@ public:
 	uint64_t			Allocate(int count);
 	void				Deallocate(uint64_t, int);
 	void				FlushBitmap();
+	bool				Valid() { return mIsValid; }
 private:
 	friend class 		RedSeaDirEntry;
 	friend class 		RedSeaFile;
 	friend class 		RedSeaDirectory;
+	bool				mIsValid;
 	int					mFile;
 	RSBoot				mBoot;
 	uint8_t *			mBitmapSectors;

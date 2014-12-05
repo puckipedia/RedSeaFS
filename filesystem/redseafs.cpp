@@ -453,10 +453,11 @@ status_t redsea_mount(fs_volume *volume, const char *device, uint32 flags,
 	const char *args, ino_t *_rootVnodeID)
 {
 	int fd = open(device, O_RDWR | O_NOCACHE);
-	printf("FD: %d\n", fd);
 
 	RedSea r(fd);
-	printf("Base offset: 00x%016X\n", r.BaseOffset());
+	
+	if (!r.Valid())
+		return B_ERROR;
 	
 	volume->ops = &gRedSeaFSVolumeOps;
 	
