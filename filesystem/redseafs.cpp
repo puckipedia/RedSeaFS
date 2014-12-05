@@ -57,7 +57,6 @@ status_t redsea_lookup(fs_volume *volume, fs_vnode *v_dir, const char *name, ino
 
 	if (entry != NULL) {
 		*id = ino_for_dirent(volume, entry);
-		put_vnode(volume, *id);
 		return B_OK;
 	}
 	
@@ -294,8 +293,6 @@ status_t redsea_read_dir(fs_volume *volume, fs_vnode *vnode, void *cookie,
 	buffer->d_dev = volume->id;
 	buffer->d_ino = ino_for_dirent(volume, entry, false);
 
-	put_vnode(volume, buffer->d_ino);
-
 	size_t namesize = buffersize - sizeof(struct dirent) - 1;
 	int namelength = strlen(entry->Name());
 	buffer->d_reclen = sizeof(struct dirent) - 1 +
@@ -305,7 +302,7 @@ status_t redsea_read_dir(fs_volume *volume, fs_vnode *vnode, void *cookie,
 		return B_BUFFER_OVERFLOW;
 	}
 	
-	strncpy(buffer->d_name, entry->Name(), namesize);
+	strcpy(buffer->d_name, entry->Name());
 
 	*num = 1;
 	return B_OK;
@@ -403,14 +400,16 @@ ino_t ino_for_dirent(fs_volume *volume, RedSeaDirEntry *entry, bool remove)
 {
 	void *private_node;
 	ino_t presumed = (ino_t)entry->DirEntry().mCluster;
-	status_t result = new_vnode(volume, presumed, entry, &gRedSeaFSVnodeOps);
-	publish_vnode(volume, presumed, entry, &gRedSeaFSVnodeOps,
+	status_t result = publish_vnode(volume, presumed, entry, &gRedSeaFSVnodeOps,
 		(entry->IsDirectory() ? S_IFDIR : S_IFREG), 0);
 
 	// TODO: Kinda-bad hack
 
-	if (result != B_OK && remove)
-		delete entry;
+	if (result != B_OK) {
+		if (remove)
+			delete entry;
+		get_vnode(volume, presumed, &private_node);
+	}
 
 	return presumed;
 }
@@ -450,7 +449,7 @@ uint32 redsea_get_supported_operations(partition_data *data, uint32 mask)
 status_t redsea_mount(fs_volume *volume, const char *device, uint32 flags,
 	const char *args, ino_t *_rootVnodeID)
 {
-	int fd = open(device, O_RDWR | O_NOCACHE);
+	int fd = open(device, O_RDWRz | O_NOCACHE);
 	printf("FD: %d\n", fd);
 
 	RedSea r(fd);
@@ -459,7 +458,6 @@ status_t redsea_mount(fs_volume *volume, const char *device, uint32 flags,
 	volume->ops = &gRedSeaFSVolumeOps;
 	
 	*_rootVnodeID = ino_for_dirent(volume, r.RootDirectory(), true);
-	put_vnode(volume, *_rootVnodeID);
 	
 	return B_OK;
 }
