@@ -201,6 +201,9 @@ struct FileCookie {
 
 status_t redsea_open(fs_volume *volume, fs_vnode *vnode, int openmode, void **cookie)
 {
+	if (openmode & O_WRONLY || openmode & O_RDWR)
+		return B_READ_ONLY_DEVICE;
+	
 	*cookie = malloc(sizeof(FileCookie));
 	FileCookie *c = (FileCookie *)*cookie;
 	
@@ -239,6 +242,9 @@ status_t redsea_read(fs_volume *volume, fs_vnode *vnode, void *cookie,
 status_t redsea_write(fs_volume *volume, fs_vnode *vnode, void *cookie,
 	off_t pos, const void *buffer, size_t *length)
 {
+	return B_READ_ONLY_DEVICE;
+
+	/*
 	RedSeaFile *f = ((FileCookie *)cookie)->file;
 
 	*length = f->Write(pos, *length, buffer);
@@ -246,7 +252,7 @@ status_t redsea_write(fs_volume *volume, fs_vnode *vnode, void *cookie,
 	if (*length == UINT64_MAX)
 		return B_ERROR;
 
-	return B_OK;
+	return B_OK; */
 }
 
 struct DirCookie {
