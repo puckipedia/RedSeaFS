@@ -550,7 +550,6 @@ status_t redsea_mount(fs_volume *volume, const char *device, uint32 flags,
 			(entry->IsDirectory() ? S_IFDIR : S_IFREG), 0);
 
 	*_rootVnodeID = entry->DirEntry().mCluster;
-	put_vnode(volume, entry->DirEntry().mCluster);
 	
 	return B_OK;
 }
