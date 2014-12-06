@@ -445,8 +445,8 @@ RedSeaDirEntry *dirent_for_pointer(fs_volume *volume, RSEntryPointer pointer)
 	uint64_t cluster = entry->DirEntry().mCluster;
 
 	if (get_vnode(volume, cluster, (void **)(&returnval)) != B_OK) {
-		publish_vnode(volume, entry->DirEntry().mCluster, returnval, &gRedSeaFSVnodeOps,
-			(returnval->IsDirectory() ? S_IFDIR : S_IFREG), 0);
+		publish_vnode(volume, entry->DirEntry().mCluster, entry, &gRedSeaFSVnodeOps,
+			(entry->IsDirectory() ? S_IFDIR : S_IFREG), 0);
 		returnval = entry;
 	} else {
 		delete entry;
@@ -526,8 +526,12 @@ status_t redsea_mount(fs_volume *volume, const char *device, uint32 flags,
 	
 	volume->ops = &gRedSeaFSVolumeOps;
 	volume->private_volume = rs;
-	
-	*_rootVnodeID = ino_for_pointer(volume, rs->RootDirectory());
+
+	RedSeaDirEntry *entry = rs->Create(rs->RootDirectory());
+	publish_vnode(volume, entry->DirEntry().mCluster, entry, &gRedSeaFSVnodeOps,
+			(entry->IsDirectory() ? S_IFDIR : S_IFREG), 0);
+
+	*_rootVnodeID = entry->DirEntry().mCluster;
 	
 	return B_OK;
 }
