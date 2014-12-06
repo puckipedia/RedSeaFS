@@ -228,6 +228,34 @@ RedSeaDirEntry::Flush()
 }
 
 
+void
+RedSeaDirEntry::LockRead()
+{
+	acquire_read_spinlock(&mLock);
+}
+
+
+void
+RedSeaDirEntry::LockWrite()
+{
+	acquire_write_spinlock(&mLock);
+}
+
+
+void
+RedSeaDirEntry::UnlockRead()
+{
+	release_read_spinlock(&mLock);
+}
+
+
+void
+RedSeaDirEntry::UnlockWrite()
+{
+	release_write_spinlock(&mLock);
+}
+
+
 RedSeaFile::RedSeaFile(RedSea *rs, uint64_t location, RedSeaDirectory *dir)
 	: RedSeaDirEntry(rs, location, dir)
 {

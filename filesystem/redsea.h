@@ -1,6 +1,8 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include <KernelExport.h>
+
 class RedSeaDirectory;
 class RedSeaDirEntry;
 
@@ -76,7 +78,12 @@ public:
 	uint64_t		EntryLocation() const { return mEntryLocation; }
 	void			Delete();
 	void			Flush();
+	void			LockRead();
+	void			LockWrite();
+	void			UnlockRead();
+	void			UnlockWrite();
 protected:
+	rw_spinlock mLock;
 	RedSeaDirectory *mDirectory;
 	RSDirEntry mDirEntry;
 	uint64_t mEntryLocation;
