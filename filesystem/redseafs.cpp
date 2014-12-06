@@ -57,7 +57,7 @@ redsea_std_ops(int32 op, ...)
 	switch (op) {
 		case B_MODULE_INIT:
 		{
-			openlog("readseafs", 0, LOG_USER);
+			openlog("readseafs", LOG_SERIAL | LOG_CONS, LOG_KERN);
 			return B_OK;
 		}
 
@@ -250,7 +250,6 @@ status_t redsea_open(fs_volume *volume, fs_vnode *vnode, int openmode, void **co
 status_t redsea_close(fs_volume *volume, fs_vnode *vnode, void *cookie)
 {
 	RedSeaFile *file = (RedSeaFile *)vnode->private_node;
-	put_vnode(volume, ino_for_dirent(volume, file));
 	TRACE("Closing '%s' (%llu)\n", file->Name(), file->DirEntry().mCluster);
 	return B_OK;
 }
@@ -454,6 +453,8 @@ fs_vnode_ops gRedSeaFSVnodeOps = {
 
 ino_t ino_for_dirent(fs_volume *volume, RedSeaDirEntry *entry)
 {
+	void *returnval;
+	get_vnode(volume, entry->DirEntry().mCluster, &returnval);
 	return entry->DirEntry().mCluster;
 }
 
