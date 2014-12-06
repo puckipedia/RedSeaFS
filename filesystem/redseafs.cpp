@@ -12,20 +12,33 @@
 
 // #pragma mark - Module Interface
 
-ino_t ino_for_dirent(fs_volume *volume, RedSeaDirEntry *entry, bool remove = false);
+ino_t ino_for_dirent(fs_volume *volume, RedSeaDirEntry *entry);
+ino_t ino_for_pointer(fs_volume *volume, RSEntryPointer pointer);
 
-RedSeaDirEntry *entry_for_name(RedSeaDirectory *directory, const char *name)
+RedSeaDirEntry *dirent_for_pointer(fs_volume *volume, RSEntryPointer pointer);
+
+RedSeaDirEntry *dirent_for_ino(fs_volume *volume, ino_t inode)
+{
+	RedSeaDirEntry *returnval;
+
+	if (get_vnode(volume, inode, (void **)(&returnval)) != B_OK)
+		return NULL;
+
+	return returnval;
+}
+
+
+RedSeaDirEntry *entry_for_name(fs_volume *volume, RedSeaDirectory *directory, const char *name)
 {
 	if (strcmp(".", name) == 0)
-		return directory->Self(); // create copy of directory
+		return directory; // create copy of directory
 	
 	for (int i = 0; i < directory->CountEntries(); i++)
 	{
-		RedSeaDirEntry *entry = directory->GetEntry(i);
+		RedSeaDirEntry *entry = dirent_for_pointer(volume, directory->GetEntry(i));
 		if (strcmp(entry->Name(), name) == 0) {
 			return entry;
 		}
-		delete entry;
 	}
 	
 	return NULL;
@@ -56,7 +69,7 @@ status_t redsea_lookup(fs_volume *volume, fs_vnode *v_dir, const char *name, ino
 	
 	RedSeaDirectory *dir = (RedSeaDirectory *)entr;
 	
-	RedSeaDirEntry *entry = entry_for_name(dir, name);
+	RedSeaDirEntry *entry = entry_for_name(volume, dir, name);
 
 	if (entry != NULL) {
 		*id = ino_for_dirent(volume, entry);
@@ -89,14 +102,12 @@ status_t redsea_unlink(fs_volume *volume, fs_vnode *v_dir, const char *name)
 	
 	for (int i = 0; i < dir->CountEntries(); i++)
 	{
-		RedSeaDirEntry *entry = dir->GetEntry(i);
+		RedSeaDirEntry *entry = dirent_for_pointer(volume, dir->GetEntry(i));
 		if (strcmp(entry->Name(), name) == 0) {
 			entry->Delete();
 			entry->Flush();
-			delete entry;
 			return true;
 		}
-		delete entry;
 	}
 	
 	return B_ERROR;
@@ -107,11 +118,11 @@ status_t redsea_rename(fs_volume *volume, fs_vnode *dir, const char *fromName,
 	fs_vnode *todir, const char *toName)
 {
 	return B_READ_ONLY_DEVICE;
-/*	
+
 	RedSeaDirectory *from = (RedSeaDirectory *)dir->private_node;
 	RedSeaDirectory *to = (RedSeaDirectory *)todir->private_node;
 	
-	RedSeaDirEntry *fromnode = entry_for_name(from, fromName);
+	RedSeaDirEntry *fromnode = entry_for_name(volume, from, fromName);
 	
 	if (from == to) {
 		from->RemoveEntry(fromnode);
@@ -125,7 +136,7 @@ status_t redsea_rename(fs_volume *volume, fs_vnode *dir, const char *fromName,
 	}
 	
 	delete fromnode;
-	return B_OK;*/
+	return B_OK;
 }
 
 
@@ -299,10 +310,11 @@ status_t redsea_read_dir(fs_volume *volume, fs_vnode *vnode, void *cookie,
 		return B_OK;
 	}
 	
-	RedSeaDirEntry *entry = dir->GetEntry(dircookie->index++);
-	
+	RedSeaDirEntry *entry = dirent_for_pointer(volume, dir->GetEntry(dircookie->index++));
+	entry->LockRead();
+
 	buffer->d_dev = volume->id;
-	buffer->d_ino = ino_for_dirent(volume, entry, false);
+	buffer->d_ino = ino_for_dirent(volume, entry);
 
 	size_t namesize = buffersize - sizeof(struct dirent) - 1;
 	int namelength = strlen(entry->Name());
@@ -310,10 +322,13 @@ status_t redsea_read_dir(fs_volume *volume, fs_vnode *vnode, void *cookie,
 		(namesize > namelength ? namelength : namesize);
 	
 	if (namelength > namesize) {
+		entry->UnlockRead();
 		return B_BUFFER_OVERFLOW;
 	}
 	
 	strcpy(buffer->d_name, entry->Name());
+
+	entry->UnlockRead();
 
 	*num = 1;
 	return B_OK;
@@ -407,22 +422,37 @@ fs_vnode_ops gRedSeaFSVnodeOps = {
 };
 
 
-ino_t ino_for_dirent(fs_volume *volume, RedSeaDirEntry *entry, bool remove)
+ino_t ino_for_dirent(fs_volume *volume, RedSeaDirEntry *entry)
 {
-	void *private_node;
-	ino_t presumed = (ino_t)entry->DirEntry().mCluster;
-	status_t result = publish_vnode(volume, presumed, entry, &gRedSeaFSVnodeOps,
-		(entry->IsDirectory() ? S_IFDIR : S_IFREG), 0);
+	return entry->DirEntry().mCluster;
+}
 
-	// TODO: Kinda-bad hack
 
-	if (result != B_OK) {
-		if (remove)
-			delete entry;
-		get_vnode(volume, presumed, &private_node);
+ino_t ino_for_pointer(fs_volume *volume, RSEntryPointer pointer)
+{
+	RedSeaDirEntry *entry = dirent_for_pointer(volume, pointer);
+	return entry->DirEntry().mCluster;
+}
+
+
+RedSeaDirEntry *dirent_for_pointer(fs_volume *volume, RSEntryPointer pointer)
+{
+	RedSea *rs = (RedSea *)volume->private_volume;
+	RedSeaDirEntry *returnval;
+
+	RedSeaDirEntry *entry = rs->Create(pointer);
+
+	uint64_t cluster = entry->DirEntry().mCluster;
+
+	if (get_vnode(volume, cluster, (void **)(&returnval)) != B_OK) {
+		publish_vnode(volume, entry->DirEntry().mCluster, returnval, &gRedSeaFSVnodeOps,
+			(returnval->IsDirectory() ? S_IFDIR : S_IFREG), 0);
+		returnval = entry;
+	} else {
+		delete entry;
 	}
 
-	return presumed;
+	return returnval;	
 }
 
 status_t redsea_read_fs_info(fs_volume* volume, struct fs_info* info)
@@ -432,7 +462,7 @@ status_t redsea_read_fs_info(fs_volume* volume, struct fs_info* info)
 	if (rs == NULL)
 		return B_ERROR;
 
-	RedSeaDirectory *root = rs->RootDirectory();
+	RedSeaDirectory *root = (RedSeaDirectory *)dirent_for_pointer(volume, rs->RootDirectory());
 	info->root = root->DirEntry().mCluster;
 	
 	info->flags = B_FS_IS_READONLY;
@@ -497,7 +527,7 @@ status_t redsea_mount(fs_volume *volume, const char *device, uint32 flags,
 	volume->ops = &gRedSeaFSVolumeOps;
 	volume->private_volume = rs;
 	
-	*_rootVnodeID = ino_for_dirent(volume, rs->RootDirectory(), true);
+	*_rootVnodeID = ino_for_pointer(volume, rs->RootDirectory());
 	
 	return B_OK;
 }

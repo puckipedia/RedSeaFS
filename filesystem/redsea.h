@@ -1,7 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#include <KernelExport.h>
+#include <Locker.h>
 
 class RedSeaDirectory;
 class RedSeaDirEntry;
@@ -19,10 +19,15 @@ struct RSBoot {
 	uint16_t signature2;
 };
 
+struct RSEntryPointer {
+	uint64_t mLocation;
+	RedSeaDirectory *mParent;
+};
+
 class RedSea {
 public:
 				RedSea(int f);
-	RedSeaDirectory *	RootDirectory();
+	RSEntryPointer		RootDirectory();
 	uint64_t			BaseOffset() { return mBoot.base_offset; }
 	uint64_t			FirstFreeSector(int count);
 	uint64_t			Allocate(int count);
@@ -31,6 +36,7 @@ public:
 	bool				Valid() { return mIsValid; }
 	RSBoot &			BootStructure() { return mBoot; }
 	int					UsedClusters();
+	RedSeaDirEntry *	Create(RSEntryPointer);
 private:
 	friend class 		RedSeaDirEntry;
 	friend class 		RedSeaFile;
@@ -83,7 +89,8 @@ public:
 	void			UnlockRead();
 	void			UnlockWrite();
 protected:
-	rw_spinlock mLock;
+	BLocker mReadLocker;
+	BLocker mWriteLocker;
 	RedSeaDirectory *mDirectory;
 	RSDirEntry mDirEntry;
 	uint64_t mEntryLocation;
@@ -104,10 +111,10 @@ public:
 						~RedSeaDirectory();
 	int					CountEntries() { return mUsedEntries; }
 	int					AddEntry(RedSeaDirEntry *);
-	RedSeaDirEntry *	GetEntry(int i);
-	RedSeaDirectory *	Self();
-	RedSeaDirectory *	CreateDirectory(const char *name, int space);
-	RedSeaFile *		CreateFile(const char *name, int size);
+	RSEntryPointer		GetEntry(int i);
+	RSEntryPointer		Self();
+	RSEntryPointer		CreateDirectory(const char *name, int space);
+	RSEntryPointer		CreateFile(const char *name, int size);
 	bool				RemoveEntry(RedSeaDirEntry *);
 	void				Flush();
 protected:

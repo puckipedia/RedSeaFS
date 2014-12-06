@@ -6,6 +6,8 @@
 #include <string.h>
 #include <unistd.h>
 
+RSEntryPointer gInvalidPointer = { UINT64_MAX, NULL };
+
 RedSea::RedSea(int f)
 {
 	mFile = f;
@@ -163,6 +165,20 @@ RedSea::FlushBitmap()
 }
 
 
+RedSeaDirEntry *
+RedSea::Create(RSEntryPointer pointer)
+{
+	uint16_t attributes;
+	Read(pointer.mLocation, 2, &attributes);
+
+	if (attributes & RS_ATTR_DIR) {
+		return new RedSeaDirectory(this, pointer.mLocation, pointer.mParent);
+	} else {
+		return new RedSeaFile(this, pointer.mLocation, pointer.mParent);
+	}
+}
+
+
 uint64_t
 RedSea::Read(uint64_t location, uint64_t count, void *result)
 {
@@ -231,28 +247,28 @@ RedSeaDirEntry::Flush()
 void
 RedSeaDirEntry::LockRead()
 {
-	acquire_read_spinlock(&mLock);
+	mReadLocker.Lock();
 }
 
 
 void
 RedSeaDirEntry::LockWrite()
 {
-	acquire_write_spinlock(&mLock);
+	mWriteLocker.Lock();
 }
 
 
 void
 RedSeaDirEntry::UnlockRead()
 {
-	release_read_spinlock(&mLock);
+	mReadLocker.Unlock();
 }
 
 
 void
 RedSeaDirEntry::UnlockWrite()
 {
-	release_write_spinlock(&mLock);
+	mWriteLocker.Unlock();
 }
 
 
@@ -363,17 +379,17 @@ RedSeaDirectory::~RedSeaDirectory()
 }
 
 
-RedSeaDirEntry *
+RSEntryPointer
 RedSeaDirectory::GetEntry(int i)
 {
 	if (i >= mUsedEntries)
-		return NULL;
+		return gInvalidPointer;
 
 	int count = 0;
 	int j;
 	for (j = 1; count != i; j++) {
 		if (j > mEntryCount)
-			return NULL;
+			return gInvalidPointer;
 
 		if (mAttributes[j] != 0x0000 && !(mAttributes[j] & RS_ATTR_DELETED)) {
 			count++;
@@ -383,37 +399,29 @@ RedSeaDirectory::GetEntry(int i)
 	i = j;
 
 	uint64_t base = mDirEntry.mCluster * 0x200 + i * 64;
-	if (mAttributes[i] == 0x0000) {
-		return NULL;
-		mEntryCount = i;
-	}
 
-	if (mAttributes[i] & RS_ATTR_DIR) {
-		return new RedSeaDirectory(mRedSea, base, this);
-	} else {
-		return new RedSeaFile(mRedSea, base, this);
-	}
+	return (RSEntryPointer) { base, this };
 }
 
 
-RedSeaDirectory *
+RSEntryPointer
 RedSeaDirectory::Self()
 {
-	return new RedSeaDirectory(mRedSea, mDirEntry.mCluster * 0x200, this);
+	return (RSEntryPointer) {mDirEntry.mCluster * 0x200, this};
 }
 
 
-RedSeaFile *
+RSEntryPointer
 RedSeaDirectory::CreateFile(const char *name, int size)
 {
 	if (mEntryCount == mUsedEntries)
-		return NULL;
+		return gInvalidPointer;
 
 	int sectors = (size + 0x1FF) / 0x200;
 	uint64_t location = mRedSea->Allocate(sectors);
 
 	if (location == UINT64_MAX)
-		return NULL;
+		return gInvalidPointer;
 
 	int j;
 	for (j = 1; j < mEntryCount; j++) {
@@ -432,14 +440,14 @@ RedSeaDirectory::CreateFile(const char *name, int size)
 
 	ent.Flush();
 
-	return new RedSeaFile(mRedSea, mDirEntry.mCluster * 0x200 + j * 64, this);
+	return (RSEntryPointer) { mDirEntry.mCluster * 0x200 + j * 64, this};
 }
 
-RedSeaDirectory *
+RSEntryPointer
 RedSeaDirectory::CreateDirectory(const char *name, int space)
 {
 	if (mEntryCount == mUsedEntries)
-		return NULL;
+		return gInvalidPointer;
 
 	char zerobuffer[0x200] = {0};
 
@@ -447,7 +455,7 @@ RedSeaDirectory::CreateDirectory(const char *name, int space)
 	uint64_t location = mRedSea->Allocate(sectors);
 
 	if (location == UINT64_MAX)
-		return NULL;
+		return gInvalidPointer;
 
 	int bytes = sectors * 0x200;
 	uint64_t loc = location * 0x200;
@@ -496,11 +504,11 @@ RedSeaDirectory::CreateDirectory(const char *name, int space)
 
 	mUsedEntries++;
 
-	return new RedSeaDirectory(mRedSea, location * 0x200, this);
+	return (RSEntryPointer) {mDirEntry.mCluster * 0x200 + j * 64, this};
 }
 
-RedSeaDirectory *
+RSEntryPointer
 RedSea::RootDirectory()
 {
-	return new RedSeaDirectory(this, (mBoot.root_sector - mBoot.base_offset) * 0x200, NULL);
+	return (RSEntryPointer) {(mBoot.root_sector - mBoot.base_offset) * 0x200, NULL};
 }
