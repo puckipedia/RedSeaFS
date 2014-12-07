@@ -98,9 +98,9 @@ status_t redsea_lookup(fs_volume *volume, fs_vnode *v_dir, const char *name, ino
 	RedSeaDirectory *dir = (RedSeaDirectory *)entr;
 	
 	RedSeaDirEntry *entry = entry_for_name(volume, dir, name);
-	release_dirent(volume, entry); // extra reference
 
 	if (entry != NULL) {
+		release_dirent(volume, entry); // extra reference
 		TRACE_REF_MOVE(entry->DirEntry().mCluster, "lookup ino_t");
 		*id = ino_for_dirent(volume, entry);
 		return B_OK;
