@@ -45,6 +45,7 @@ RedSea::UsedClusters()
 	int result = 0;
 	for (int i = 0; i < mBitmapLength; i++)
 		result += popcount(mBitmapSectors[i]);
+	result += mBitmapLength + 1;
 	return result;
 }
 
@@ -57,9 +58,10 @@ RedSea::FirstFreeSector(int count)
 	for (i = 0; i < mBitmapLength; i++) {
 		int bi, ci;
 		for (bi = 1, ci = 0; ci < 8; bi <<= 1, ci++) {
-			if (!(mBitmapSectors[i] & bi)) {
+			if ((mBitmapSectors[i] & bi) == 0) {
 				if (start == UINT64_MAX) {
-					start = ((i + mBitmapLength + 1) << 3) | ci;
+					start = (i << 3) | ci;
+					start += mBoot.bitmap_sectors + 1;
 				}
 				ccount++;
 				if (ccount >= count)
@@ -87,7 +89,9 @@ RedSea::Allocate(int count)
 		return firstFree;
 
 	uint64_t start = firstFree;
-	uint64_t end = firstFree + count - 1; // inclusive!
+	start -= mBoot.bitmap_sectors + 1;
+
+	uint64_t end = start + count - 1; // inclusive!
 
 	int startbit = start % 8;
 	int endbit = end % 8;
@@ -125,7 +129,7 @@ RedSea::Allocate(int count)
 void
 RedSea::Deallocate(uint64_t start, int count)
 {
-	start -= mBitmapLength + 1;
+	start -= mBoot.bitmap_sectors + 1;
 	uint64_t end = start + count - 1; // inclusive!
 
 	int startbit = start % 8;
@@ -162,7 +166,7 @@ RedSea::Deallocate(uint64_t start, int count)
 bool
 RedSea::IsFree(uint64_t sector)
 {
-	sector -= mBitmapLength + 1;
+	sector -= mBoot.bitmap_sectors + 1;
 	return mBitmapSectors[sector >> 3] & (1 << (sector % 8)) == 1;
 }
 
@@ -170,7 +174,7 @@ RedSea::IsFree(uint64_t sector)
 void
 RedSea::ForceAllocate(uint64_t sector)
 {
-	sector -= mBitmapLength + 1;
+	sector -= mBoot.bitmap_sectors + 1;
 	mBitmapSectors[sector >> 3] |= (1 << (sector % 8));
 }
 
@@ -260,15 +264,33 @@ RedSeaDirEntry::Resize(uint64_t preferred)
 	} else {
 		uint64_t newsectors = currentEndSector - previousEndSector;
 		for (uint64_t i = currentEndSector + 1; i <= currentEndSector; i++) {
-			if (!mRedSea->IsFree(i))
-				return false;
+			if (!mRedSea->IsFree(i)) {
+				if (IsDirectory())
+					return false; // other directories may point to this one, can't know which ones
+				
+				uint64_t sectors = mRedSea->Allocate(newsectors);
+				if (sectors == UINT64_MAX)
+					return false; // not enough space?
+
+				uint8_t *buffer = new uint8_t[mDirEntry.mSize];
+				uint64_t oldSize = mDirEntry.mSize;
+				mRedSea->Read(mDirEntry.mCluster * 0x200, mDirEntry.mSize, buffer);
+				mRedSea->Deallocate(mDirEntry.mCluster, (mDirEntry.mSize + 0x1FF) / 0x200);
+				mDirEntry.mCluster = sectors;
+				mDirEntry.mSize = preferred;
+				mRedSea->Write(mDirEntry.mCluster * 0x200, oldSize, buffer);
+			}
 		}
 		
 		// All sectors are free, continue getting file
 		for (uint64_t i = currentEndSector + 1; i <= currentEndSector; i++) {
 			mRedSea->ForceAllocate(i);
 		}
+
+		mDirEntry.mSize = preferred;
 	}
+	
+	return true;
 }
 
 void

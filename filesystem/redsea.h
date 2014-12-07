@@ -17,7 +17,7 @@ struct RSBoot {
 	uint64_t unique_id;
 	uint8_t code[462];
 	uint16_t signature2;
-};
+} __attribute__((packed));
 
 struct RSEntryPointer {
 	uint64_t mLocation;
