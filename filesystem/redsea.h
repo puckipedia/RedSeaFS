@@ -24,12 +24,16 @@ struct RSEntryPointer {
 	RedSeaDirectory *mParent;
 };
 
+extern RSEntryPointer gInvalidPointer;
+
 class RedSea {
 public:
 				RedSea(int f);
 	RSEntryPointer		RootDirectory();
 	uint64_t			BaseOffset() { return mBoot.base_offset; }
 	uint64_t			FirstFreeSector(int count);
+	bool				IsFree(uint64_t sector);
+	void				ForceAllocate(uint64_t sector);
 	uint64_t			Allocate(int count);
 	void				Deallocate(uint64_t, int);
 	void				FlushBitmap();
@@ -82,6 +86,7 @@ public:
 	const char *	Name() const { return mDirEntry.mName; }
 	RSDirEntry &	DirEntry() { return mDirEntry; }
 	uint64_t		EntryLocation() const { return mEntryLocation; }
+	bool			Resize(uint64_t preferredSize);
 	void			Delete();
 	void			Flush();
 	void			LockRead();

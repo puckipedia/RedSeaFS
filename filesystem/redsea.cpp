@@ -59,7 +59,7 @@ RedSea::FirstFreeSector(int count)
 		for (bi = 1, ci = 0; ci < 8; bi <<= 1, ci++) {
 			if (!(mBitmapSectors[i] & bi)) {
 				if (start == UINT64_MAX) {
-					start = (i << 3) | ci;
+					start = ((i + mBitmapLength + 1) << 3) | ci;
 				}
 				ccount++;
 				if (ccount >= count)
@@ -125,6 +125,7 @@ RedSea::Allocate(int count)
 void
 RedSea::Deallocate(uint64_t start, int count)
 {
+	start -= mBitmapLength + 1;
 	uint64_t end = start + count - 1; // inclusive!
 
 	int startbit = start % 8;
@@ -155,6 +156,22 @@ RedSea::Deallocate(uint64_t start, int count)
 			}
 		}
 	}
+}
+
+
+bool
+RedSea::IsFree(uint64_t sector)
+{
+	sector -= mBitmapLength + 1;
+	return mBitmapSectors[sector >> 3] & (1 << (sector % 8)) == 1;
+}
+
+
+void
+RedSea::ForceAllocate(uint64_t sector)
+{
+	sector -= mBitmapLength + 1;
+	mBitmapSectors[sector >> 3] |= (1 << (sector % 8));
 }
 
 
@@ -224,6 +241,35 @@ RedSeaDirEntry::RedSeaDirEntry(RedSea *rs, uint64_t location, RedSeaDirectory *d
 	mDirectory = dir;
 }
 
+
+bool
+RedSeaDirEntry::Resize(uint64_t preferred)
+{
+	uint64_t previousEndSector = (mDirEntry.mSize + 0x1FF) / 0x200;
+	uint64_t currentEndSector = (preferred + 0x1FF) / 0x200;
+
+	if (currentEndSector == previousEndSector) {// no new sectors needed!
+		mDirEntry.mSize = preferred;
+		return true;
+	}
+
+	if (preferred < mDirEntry.mSize) {
+		// Downsizing
+		mDirEntry.mSize = preferred;
+		mRedSea->Deallocate(currentEndSector + 1, previousEndSector - currentEndSector);
+	} else {
+		uint64_t newsectors = currentEndSector - previousEndSector;
+		for (uint64_t i = currentEndSector + 1; i <= currentEndSector; i++) {
+			if (!mRedSea->IsFree(i))
+				return false;
+		}
+		
+		// All sectors are free, continue getting file
+		for (uint64_t i = currentEndSector + 1; i <= currentEndSector; i++) {
+			mRedSea->ForceAllocate(i);
+		}
+	}
+}
 
 void
 RedSeaDirEntry::Delete()
@@ -414,8 +460,14 @@ RedSeaDirectory::Self()
 RSEntryPointer
 RedSeaDirectory::CreateFile(const char *name, int size)
 {
-	if (mEntryCount == mUsedEntries)
-		return gInvalidPointer;
+	if (mEntryCount == mUsedEntries) {
+		if (Resize(mDirEntry.mSize + 0x200)) {
+			mEntryCount = mDirEntry.mSize / 64;
+			Flush();
+		} else {
+			return gInvalidPointer;
+		}
+	}
 
 	int sectors = (size + 0x1FF) / 0x200;
 	uint64_t location = mRedSea->Allocate(sectors);

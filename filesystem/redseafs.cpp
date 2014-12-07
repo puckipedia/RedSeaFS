@@ -11,43 +11,61 @@
 #include <string.h>
 #include "redsea.h"
 
+#if 1
 #define TRACE(format, ...) do { syslog(LOG_DEBUG, format, __VA_ARGS__); } while (0)
+#else
+#define TRACE(format, ...) do { } while (0)
+#endif
 
+#define TRACE_ENTER do { TRACE(" entered %s\n", __PRETTY_FUNCTION__); } while(0)
+#define TRACE_EXIT do { TRACE(" exited  %s\n", __PRETTY_FUNCTION__); } while(0)
+#define TRACE_REF_ADD(num) do { syslog(LOG_DEBUG, "    ref[%llu]++ (%s)\n", (num), __PRETTY_FUNCTION__); } while (0)
+#define TRACE_REF_DEL(num) do { syslog(LOG_DEBUG, "    ref[%llu]-- (%s)\n", (num), __PRETTY_FUNCTION__); } while (0)
+#define TRACE_REF_MOVE(num, reason) do { syslog(LOG_DEBUG, "exit -> [%llu] ref moves to %s\n", (num), (reason)); } while (0)
 // #pragma mark - Module Interface
 
 ino_t ino_for_dirent(fs_volume *volume, RedSeaDirEntry *entry);
 ino_t ino_for_pointer(fs_volume *volume, RSEntryPointer pointer);
 
 void enter_dirent(fs_volume *volume, RedSeaDirEntry *entry);
+void release_dirent(fs_volume *volume, RedSeaDirEntry *entry);
 
 RedSeaDirEntry *dirent_for_pointer(fs_volume *volume, RSEntryPointer pointer);
 
 RedSeaDirEntry *dirent_for_ino(fs_volume *volume, ino_t inode)
 {
+	TRACE_ENTER;
 	RedSeaDirEntry *returnval;
 
 	if (get_vnode(volume, inode, (void **)(&returnval)) != B_OK)
 		return NULL;
 
+	TRACE_REF_ADD( inode);
+
+	TRACE_EXIT;
 	return returnval;
 }
 
 
 RedSeaDirEntry *entry_for_name(fs_volume *volume, RedSeaDirectory *directory, const char *name)
 {
+	TRACE_ENTER;
+	TRACE("entry_for_name -> dir '%s' (%llu), name '%s'\n", directory->Name(), directory->DirEntry().mCluster, name);
 	if (strcmp(".", name) == 0)
-		return directory;
+		return dirent_for_ino(volume, directory->DirEntry().mCluster);
 	
 	for (int i = 0; i < directory->CountEntries(); i++)
 	{
 		RedSeaDirEntry *entry = dirent_for_pointer(volume, directory->GetEntry(i));
 		if (strcmp(entry->Name(), name) == 0) {
+			TRACE_EXIT;
 			return entry;
 		}
 
-		put_vnode(volume, ino_for_dirent(volume, entry));
+		release_dirent(volume, entry);
 	}
 	
+	TRACE_EXIT;
 	return NULL;
 }
 
@@ -71,6 +89,7 @@ redsea_std_ops(int32 op, ...)
 
 status_t redsea_lookup(fs_volume *volume, fs_vnode *v_dir, const char *name, ino_t *id)
 {
+	TRACE_ENTER;
 	RedSeaDirEntry *entr = (RedSeaDirEntry *)v_dir->private_node;
 	if (!entr->IsDirectory())
 		return B_ERROR;
@@ -79,30 +98,36 @@ status_t redsea_lookup(fs_volume *volume, fs_vnode *v_dir, const char *name, ino
 	RedSeaDirectory *dir = (RedSeaDirectory *)entr;
 	
 	RedSeaDirEntry *entry = entry_for_name(volume, dir, name);
+	release_dirent(volume, entry); // extra reference
 
 	if (entry != NULL) {
+		TRACE_REF_MOVE(entry->DirEntry().mCluster, "lookup ino_t");
 		*id = ino_for_dirent(volume, entry);
 		return B_OK;
 	}
 	
+	TRACE_EXIT;
 	return B_ERROR;
 }
 
 
 status_t redsea_get_vnode_name(fs_volume *volume, fs_vnode *vnode, char *buffer, size_t bufferSize)
 {
+	TRACE_ENTER;
 	RedSeaDirEntry *entr = (RedSeaDirEntry *)vnode->private_node;
 
 	if (entr == NULL)
 		return B_ERROR;
 
 	strncpy(buffer, entr->Name(), bufferSize);
+	TRACE_EXIT;
 	return B_OK;
 }
 
 
 status_t redsea_unlink(fs_volume *volume, fs_vnode *v_dir, const char *name)
 {
+	TRACE_ENTER;
 	RedSeaDirEntry *entr = (RedSeaDirEntry *)v_dir->private_node;
 	if (!entr->IsDirectory())
 		return B_ERROR;
@@ -118,9 +143,10 @@ status_t redsea_unlink(fs_volume *volume, fs_vnode *v_dir, const char *name)
 	entry->Delete();
 	entry->Flush();
 
-	put_vnode(volume, ino_for_dirent(volume, entry));
-	remove_vnode(volume, ino_for_dirent(volume, entry));
+	release_dirent(volume, entry);
+	remove_vnode(volume, entry->DirEntry().mCluster);
 	delete entry;
+	TRACE_EXIT;
 
 	return B_OK;
 }
@@ -129,12 +155,14 @@ status_t redsea_unlink(fs_volume *volume, fs_vnode *v_dir, const char *name)
 status_t redsea_rename(fs_volume *volume, fs_vnode *dir, const char *fromName,
 	fs_vnode *todir, const char *toName)
 {
+	TRACE_ENTER;
 	RedSeaDirectory *from = (RedSeaDirectory *)dir->private_node;
 	RedSeaDirectory *to = (RedSeaDirectory *)todir->private_node;
 	
 	RedSeaDirEntry *fromnode = entry_for_name(volume, from, fromName);
 	
 	ino_t old_ino = ino_for_dirent(volume, fromnode);
+	release_dirent(volume, fromnode);
 
 	if (from == to) {
 		from->RemoveEntry(fromnode);
@@ -146,15 +174,15 @@ status_t redsea_rename(fs_volume *volume, fs_vnode *dir, const char *fromName,
 		from->RemoveEntry(fromnode);
 	}
 
-	put_vnode(volume, old_ino);
 	remove_vnode(volume, old_ino);
 	
 	enter_dirent(volume, fromnode);
-	put_vnode(volume, ino_for_dirent(volume, fromnode));
+	release_dirent(volume, fromnode);
 
 	TRACE("Renamed '%s' in '%s' (%llu) to '%s' in '%s' (%llu)\n", fromName, from->Name(), from->DirEntry().mCluster,
 		toName, to->Name(), to->DirEntry().mCluster);
 
+	TRACE_EXIT;
 	return B_OK;
 }
 
@@ -168,6 +196,7 @@ status_t redsea_access(fs_volume* volume, fs_vnode *vnode, int mode)
 status_t redsea_read_stat(fs_volume *volume, fs_vnode *vnode,
 	struct stat *stat)
 {
+	TRACE_ENTER;
 	RedSeaDirEntry *entry = (RedSeaDirEntry *)vnode->private_node;
 	TRACE("Read stat for vnode '%s' (%llu)\n", entry->Name(), entry->DirEntry().mCluster);
 	ino_for_dirent(volume, entry); // acquire vnode
@@ -178,6 +207,8 @@ status_t redsea_read_stat(fs_volume *volume, fs_vnode *vnode,
 	stat->st_size = entry->DirEntry().mSize;
 	stat->st_blksize = 0x200;
 	stat->st_blocks = (stat->st_size + 0x1FF) / 0x200;
+	TRACE_REF_MOVE(entry->DirEntry().mCluster, "stat return value");
+	TRACE_EXIT;
 	return B_OK;
 }
 
@@ -219,45 +250,70 @@ status_t redsea_unmount(fs_volume *volume)
 status_t redsea_write_stat(fs_volume *volume, fs_vnode *vnode,
 	const struct stat *stat, uint32 statmask)
 {
-	return B_ERROR;
+	RedSeaDirEntry *entry = (RedSeaDirEntry *)vnode->private_node;
+	
+	if (statmask & B_STAT_SIZE_INSECURE) {
+		uint64_t origsize = entry->DirEntry().mSize;
+		if (!entry->Resize(stat->st_size))
+			return B_ERROR;
+		entry->Flush();
+		((RedSea *)volume->private_volume)->FlushBitmap();
+		// TODO: Padding
+	}
+	
+	return B_OK;
 }
 
 
 status_t redsea_create(fs_volume *volume, fs_vnode *dir, const char *name,
 	int openmode, int perms, void **cookie, ino_t *newVnodeId)
 {
-	return B_ERROR;
+	RedSeaDirectory *d = (RedSeaDirectory *)dir->private_node;
+	
+	RSEntryPointer p = d->CreateFile(name, 0x400);
+	if (p.mLocation == gInvalidPointer.mLocation)
+		return B_ERROR;
+
+	*newVnodeId = ino_for_pointer(volume, p);
+	
+	return B_OK;
 }
 
 struct FileCookie {
 	RedSeaFile *file;
+	int openmode;
 };
 
 status_t redsea_open(fs_volume *volume, fs_vnode *vnode, int openmode, void **cookie)
 {
-	if (openmode & O_WRONLY || openmode & O_RDWR)
-		return B_READ_ONLY_DEVICE;
+	TRACE_ENTER;
 	
 	*cookie = malloc(sizeof(FileCookie));
 	FileCookie *c = (FileCookie *)*cookie;
-	
+
+	c->openmode = openmode;	
 	c->file = (RedSeaFile *)vnode->private_node;
 	TRACE("Opening '%s' (%llu) -> open mode 0x%X\n", c->file->Name(), c->file->DirEntry().mCluster, openmode);
+	TRACE_EXIT;
 	return B_OK;
 }
 
 
 status_t redsea_close(fs_volume *volume, fs_vnode *vnode, void *cookie)
 {
+	TRACE_ENTER;
 	RedSeaFile *file = (RedSeaFile *)vnode->private_node;
 	TRACE("Closing '%s' (%llu)\n", file->Name(), file->DirEntry().mCluster);
+	TRACE_EXIT;
 	return B_OK;
 }
 
 
 status_t redsea_free_cookie(fs_volume *volume, fs_vnode *vnode, void *cookie)
 {
+	TRACE_ENTER;
 	delete (FileCookie *)cookie;
+	TRACE_EXIT;
 	return B_OK;
 }
 
@@ -265,10 +321,17 @@ status_t redsea_free_cookie(fs_volume *volume, fs_vnode *vnode, void *cookie)
 status_t redsea_read(fs_volume *volume, fs_vnode *vnode, void *cookie,
 	off_t pos, void *buffer, size_t *length)
 {
-	RedSeaFile *f = ((FileCookie *)cookie)->file;
+	TRACE_ENTER;
+
+	FileCookie *c = (FileCookie *) cookie;
+	RedSeaFile *f = c->file;
+
+	if (!(c->openmode & O_RDONLY) && !(c->openmode & O_RDWR))
+		return B_DONT_DO_THAT;
 
 	*length = f->Read(pos, *length, buffer);
 
+	TRACE_EXIT;
 	if (*length == UINT64_MAX)
 		return B_ERROR;
 
@@ -279,17 +342,18 @@ status_t redsea_read(fs_volume *volume, fs_vnode *vnode, void *cookie,
 status_t redsea_write(fs_volume *volume, fs_vnode *vnode, void *cookie,
 	off_t pos, const void *buffer, size_t *length)
 {
-	return B_READ_ONLY_DEVICE;
+	FileCookie *c = (FileCookie *) cookie;
+	RedSeaFile *f = c->file;
 
-	/*
-	RedSeaFile *f = ((FileCookie *)cookie)->file;
+	if (!(c->openmode & O_WRONLY) && !(c->openmode & O_RDWR))
+		return B_DONT_DO_THAT;
 
 	*length = f->Write(pos, *length, buffer);
 
 	if (*length == UINT64_MAX)
 		return B_ERROR;
 
-	return B_OK; */
+	return B_OK;
 }
 
 struct DirCookie {
@@ -300,6 +364,7 @@ struct DirCookie {
 status_t redsea_open_dir(fs_volume *volume, fs_vnode *vnode, void **cookie) {
 	RedSeaDirEntry *entr = (RedSeaDirEntry *)vnode->private_node;
 
+	TRACE_ENTER;
 	if (!entr->IsDirectory())
 		return B_ERROR;
 
@@ -308,20 +373,25 @@ status_t redsea_open_dir(fs_volume *volume, fs_vnode *vnode, void **cookie) {
 	*cookie = c;
 	TRACE("Opening dir '%s' (%llu)\n", entr->Name(), entr->DirEntry().mCluster);
 	
+	TRACE_EXIT;
 	return B_OK;
 }
 
 
 status_t redsea_close_dir(fs_volume *volume, fs_vnode *vnode, void *cookie)
 {
+	TRACE_ENTER;
 	RedSeaDirEntry *entr = (RedSeaDirEntry *)vnode->private_node;
 	TRACE("Closing dir '%s' (%llu)\n", entr->Name(), entr->DirEntry().mCluster);
+	TRACE_EXIT;
 	return B_OK;
 }
 
 status_t redsea_free_dir_cookie(fs_volume *volume, fs_vnode *vnode, void *cookie)
 {
+	TRACE_ENTER;
 	delete (DirCookie *)cookie;
+	TRACE_EXIT;
 	return B_OK;
 }
 
@@ -329,6 +399,7 @@ status_t redsea_free_dir_cookie(fs_volume *volume, fs_vnode *vnode, void *cookie
 status_t redsea_read_dir(fs_volume *volume, fs_vnode *vnode, void *cookie,
 	struct dirent *buffer, size_t buffersize, uint32 *num)
 {
+	TRACE_ENTER;
 	RedSeaDirectory *dir = (RedSeaDirectory *)vnode->private_node;
 	DirCookie *dircookie = (DirCookie *)cookie;
 	
@@ -349,27 +420,31 @@ status_t redsea_read_dir(fs_volume *volume, fs_vnode *vnode, void *cookie,
 		(namesize > namelength ? namelength : namesize);
 	
 	if (namelength > namesize) {
-		put_vnode(volume, ino_for_dirent(volume, entry));
+		release_dirent(volume, entry);
 		entry->UnlockRead();
 		return B_BUFFER_OVERFLOW;
 	}
 	
 	strcpy(buffer->d_name, entry->Name());
-	TRACE("Reading dir %llu, got '%s' (" B_PRIX64 ")\n", dir->DirEntry().mCluster, entry->Name(), entry->DirEntry().mCluster);
+	TRACE("Reading dir %llu, got '%s' (%llu)\n", dir->DirEntry().mCluster, entry->Name(), entry->DirEntry().mCluster);
 
 	entry->UnlockRead();
+	TRACE_REF_MOVE(entry->DirEntry().mCluster, "read_dir return value");
 
 	*num = 1;
+	TRACE_EXIT;
 	return B_OK;
 }
 
 
 status_t redsea_rewind_dir(fs_volume *volume, fs_vnode *vnode, void *cookie)
 {
+	TRACE_ENTER;
 	RedSeaDirectory *dir = (RedSeaDirectory *)vnode->private_node;
 	DirCookie *dircookie = (DirCookie *)cookie;
 	dircookie->index = 0;
 	
+	TRACE_EXIT;
 	return B_OK;
 }
 
@@ -453,24 +528,27 @@ fs_vnode_ops gRedSeaFSVnodeOps = {
 
 ino_t ino_for_dirent(fs_volume *volume, RedSeaDirEntry *entry)
 {
+	TRACE_ENTER;
 	void *returnval;
 	get_vnode(volume, entry->DirEntry().mCluster, &returnval);
+	TRACE_REF_ADD( entry->DirEntry().mCluster);
+	TRACE_EXIT;
 	return entry->DirEntry().mCluster;
 }
 
 
 ino_t ino_for_pointer(fs_volume *volume, RSEntryPointer pointer)
 {
+	TRACE_ENTER;
 	RedSeaDirEntry *entry = dirent_for_pointer(volume, pointer);
-
-	put_vnode(volume, entry->DirEntry().mCluster);
-
+	TRACE_EXIT;
 	return entry->DirEntry().mCluster;
 }
 
 
 RedSeaDirEntry *dirent_for_pointer(fs_volume *volume, RSEntryPointer pointer)
 {
+	TRACE_ENTER;
 	RedSea *rs = (RedSea *)volume->private_volume;
 	RedSeaDirEntry *returnval;
 
@@ -485,18 +563,33 @@ RedSeaDirEntry *dirent_for_pointer(fs_volume *volume, RSEntryPointer pointer)
 	} else {
 		delete entry;
 	}
-
-	return returnval;	
+	TRACE_REF_ADD( cluster);
+	TRACE_EXIT;
+	return returnval;
 }
 
 void enter_dirent(fs_volume *volume, RedSeaDirEntry *entry)
 {
+	TRACE_ENTER;
 	publish_vnode(volume, entry->DirEntry().mCluster, entry, &gRedSeaFSVnodeOps,
 			(entry->IsDirectory() ? S_IFDIR : S_IFREG), 0);
+	TRACE_REF_ADD( entry->DirEntry().mCluster);
+	TRACE_EXIT;
 }
+
+
+void release_dirent(fs_volume *volume, RedSeaDirEntry *entry)
+{
+	TRACE_ENTER;
+	TRACE_REF_DEL( entry->DirEntry().mCluster);
+	put_vnode(volume, entry->DirEntry().mCluster);
+	TRACE_EXIT;
+}
+
 
 status_t redsea_read_fs_info(fs_volume* volume, struct fs_info* info)
 {
+	TRACE_ENTER;
 	RedSea *rs = (RedSea *)volume->private_volume;
 
 	if (rs == NULL)
@@ -517,6 +610,8 @@ status_t redsea_read_fs_info(fs_volume* volume, struct fs_info* info)
 	strcpy(info->volume_name, "RedSea Volume");
 	strcpy(info->fsh_name, "RedSeaFS");
 
+	TRACE_REF_MOVE(info->root, "read_fs_info return value");
+	TRACE_EXIT;
 	return B_OK;
 }
 
@@ -548,6 +643,7 @@ fs_volume_ops gRedSeaFSVolumeOps = {
 
 uint32 redsea_get_supported_operations(partition_data *data, uint32 mask)
 {
+	TRACE_EXIT;
 	return B_DISK_SYSTEM_SUPPORTS_WRITING;
 }
 
@@ -555,6 +651,7 @@ uint32 redsea_get_supported_operations(partition_data *data, uint32 mask)
 status_t redsea_mount(fs_volume *volume, const char *device, uint32 flags,
 	const char *args, ino_t *_rootVnodeID)
 {
+	TRACE_ENTER;
 	int fd = open(device, O_RDWR | O_NOCACHE);
 
 	RedSea *rs = new RedSea(fd);
@@ -572,7 +669,7 @@ status_t redsea_mount(fs_volume *volume, const char *device, uint32 flags,
 			(entry->IsDirectory() ? S_IFDIR : S_IFREG), 0);
 
 	*_rootVnodeID = entry->DirEntry().mCluster;
-	
+	TRACE_EXIT;
 	return B_OK;
 }
 
