@@ -11,7 +11,7 @@
 #include <string.h>
 #include "redsea.h"
 
-#define SHOULD_LOG 1
+#define SHOULD_LOG 0
 #if SHOULD_LOG
 #define TRACE(format, ...) do { syslog(LOG_DEBUG, "RS: %.*s " format, trace_indent, "    ", __VA_ARGS__); } while (0)
 #else
@@ -185,6 +185,9 @@ status_t redsea_unlink(fs_volume *volume, fs_vnode *v_dir, const char *name)
 	release_dirent(volume, entry);
 	remove_vnode(volume, entry->DirEntry().mCluster);
 	delete entry;
+	
+	dir->UnlockRead();
+	dir->UnlockWrite();
 	TRACE_EXIT;
 
 	return B_OK;

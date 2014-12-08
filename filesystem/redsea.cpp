@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <errno.h>
 #include <stdint.h>
 #include <string.h>
 #include <unistd.h>
@@ -11,7 +12,7 @@ RSEntryPointer gInvalidPointer = { UINT64_MAX, NULL };
 
 RedSea::RedSea(int f)
 {
-	//debugger("init");
+	debugger("init");
 	mFile = f;
 	Read(0, 0x200, &mBoot);
 
@@ -136,6 +137,10 @@ void
 RedSea::Deallocate(uint64_t start, int count)
 {
 	start -= mBoot.bitmap_sectors + 1;
+
+	if (count == 0)
+		count = 1;
+
 	uint64_t end = start + count - 1; // inclusive!
 
 	int startbit = start % 8;
@@ -209,16 +214,52 @@ RedSea::Create(RSEntryPointer pointer)
 uint64_t
 RedSea::Read(uint64_t location, uint64_t count, void *result)
 {
+	mFileLocker.Lock();
 	lseek(mFile, location, SEEK_SET);
-	return read(mFile, result, count);
+	int64_t readbytes = 0;
+	while (count > 0) {
+		uint64_t toread = count >= 0x200 ? 0x200 : count;
+		uint64_t haveread = read(mFile, result, toread);
+		result = (void *) (((char *)result) + haveread);
+		readbytes += haveread;
+		count -= toread;
+		if (haveread != toread) {
+			mFileLocker.Unlock();
+			return readbytes;
+		}
+	}
+	mFileLocker.Unlock();
+	return readbytes;
 }
 
 
 uint64_t
 RedSea::Write(uint64_t location, uint64_t count, const void *from)
 {
+	mFileLocker.Lock();
+	uint8_t *buffer = new uint8_t[count];
+	uint8_t *bpointer = buffer;
+	memcpy(buffer, from, count);
+
 	lseek(mFile, location, SEEK_SET);
-	return write(mFile, from, count);
+	int64_t writtenbytes = 0;
+	while (count > 0) {
+		uint64_t towrite = count >= 0x200 ? 0x200 : count;
+		uint64_t havewritten = write(mFile, buffer, towrite);
+		buffer += havewritten;
+		writtenbytes += havewritten;
+		count -= towrite;
+		if (havewritten != towrite) {
+			mFileLocker.Unlock();
+			delete[] bpointer;
+			int err = errno;
+			debugger(strerror(err));
+			return writtenbytes;
+		}
+	}
+	delete[] bpointer;
+	mFileLocker.Unlock();
+	return writtenbytes;
 }
 
 
@@ -255,8 +296,8 @@ RedSeaDirEntry::RedSeaDirEntry(RedSea *rs, uint64_t location, RedSeaDirectory *d
 bool
 RedSeaDirEntry::Resize(uint64_t preferred)
 {
-	uint64_t previousEndSector = (mDirEntry.mSize + 0x1FF) / 0x200;
-	uint64_t currentEndSector = (preferred + 0x1FF) / 0x200;
+	uint64_t previousEndSector = mDirEntry.mCluster + (mDirEntry.mSize + 0x1FF) / 0x200;
+	uint64_t currentEndSector = mDirEntry.mCluster + (preferred + 0x1FF) / 0x200;
 
 	if (currentEndSector == previousEndSector) {// no new sectors needed!
 		mDirEntry.mSize = preferred;

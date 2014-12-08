@@ -45,6 +45,7 @@ private:
 	friend class 		RedSeaDirEntry;
 	friend class 		RedSeaFile;
 	friend class 		RedSeaDirectory;
+	BLocker				mFileLocker;
 	bool				mIsValid;
 	int					mFile;
 	RSBoot				mBoot;
