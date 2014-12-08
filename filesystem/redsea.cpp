@@ -285,6 +285,8 @@ RedSeaDirEntry::Resize(uint64_t preferred)
 				mDirEntry.mCluster = sectors;
 				mDirEntry.mSize = preferred;
 				mRedSea->Write(mDirEntry.mCluster * 0x200, oldSize, buffer);
+				delete[] buffer;
+				return true;
 			}
 		}
 		
