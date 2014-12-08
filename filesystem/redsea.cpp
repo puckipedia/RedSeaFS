@@ -5,11 +5,13 @@
 #include <stdint.h>
 #include <string.h>
 #include <unistd.h>
+#include <OS.h>
 
 RSEntryPointer gInvalidPointer = { UINT64_MAX, NULL };
 
 RedSea::RedSea(int f)
 {
+	//debugger("init");
 	mFile = f;
 	Read(0, 0x200, &mBoot);
 
@@ -22,7 +24,11 @@ RedSea::RedSea(int f)
 
 	mBitmapLength = mBoot.bitmap_sectors * 0x200;
 	mBitmapSectors = new uint8_t[mBitmapLength];
-	Read(0x200, mBitmapLength * 0x200, mBitmapSectors);
+	uint64_t readbytes = Read(0x200, mBitmapLength, mBitmapSectors);
+	if (readbytes != mBitmapLength) {
+		mIsValid = false;
+		delete[] mBitmapSectors;
+	}
 }
 
 
@@ -263,7 +269,7 @@ RedSeaDirEntry::Resize(uint64_t preferred)
 		mRedSea->Deallocate(currentEndSector + 1, previousEndSector - currentEndSector);
 	} else {
 		uint64_t newsectors = currentEndSector - previousEndSector;
-		for (uint64_t i = currentEndSector + 1; i <= currentEndSector; i++) {
+		for (uint64_t i = previousEndSector + 1; i <= currentEndSector; i++) {
 			if (!mRedSea->IsFree(i)) {
 				if (IsDirectory())
 					return false; // other directories may point to this one, can't know which ones
@@ -283,7 +289,7 @@ RedSeaDirEntry::Resize(uint64_t preferred)
 		}
 		
 		// All sectors are free, continue getting file
-		for (uint64_t i = currentEndSector + 1; i <= currentEndSector; i++) {
+		for (uint64_t i = previousEndSector + 1; i <= currentEndSector; i++) {
 			mRedSea->ForceAllocate(i);
 		}
 
@@ -392,8 +398,6 @@ RedSeaDirectory::AddEntry(RedSeaDirEntry *entry)
 		}
 	}
 	
-	mUsedEntries++;
-	
 	RSDirEntry &ent = entry->DirEntry();
 	
 	RedSeaDirEntry entr(mRedSea, mDirEntry.mCluster * 0x200 + j * 64, this);
@@ -492,6 +496,10 @@ RedSeaDirectory::CreateFile(const char *name, int size)
 	}
 
 	int sectors = (size + 0x1FF) / 0x200;
+
+	if (sectors == 0)
+		sectors = 1;
+
 	uint64_t location = mRedSea->Allocate(sectors);
 
 	if (location == UINT64_MAX)
@@ -575,8 +583,6 @@ RedSeaDirectory::CreateDirectory(const char *name, int space)
 	cent.mCluster = location;
 	cent.mSize = sectors * 0x200;
 	child.Flush();
-
-	mUsedEntries++;
 
 	return (RSEntryPointer) {mDirEntry.mCluster * 0x200 + j * 64, this};
 }
